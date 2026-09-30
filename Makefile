@@ -11,3 +11,6 @@ migrate-up:
 
 migrate-down:
 	@migrate -path ./internal/database/migrations -database ${DATABASE_URL} down 1
+
+air:
+	@air --build.cmd "go build -o bin/api cmd/api/main.go" --build.entrypoint "./bin/api"

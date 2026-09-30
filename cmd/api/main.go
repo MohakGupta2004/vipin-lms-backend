@@ -56,7 +56,7 @@ func main() {
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
 	mux.HandleFunc("POST /api/v1/register", authHandler.RegisterHandler)
-
+	mux.HandleFunc("POST /api/v1/login", authHandler.LoginHandler)
 	srv := http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      mux,

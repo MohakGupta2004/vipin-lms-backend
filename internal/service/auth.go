@@ -59,6 +59,27 @@ func (s *AuthService) Register(firstName, lastName, email, password string) (*mo
 	return registeredUser, token, nil
 }
 
+func (s *AuthService) Login(email, password string) (*models.User, string, error) {
+	user, err := s.userRepository.GetUserByEmail(email, s.databaseContext)
+	if err != nil {
+		return nil, "", err
+	}
+	if user == nil {
+		return nil, "", errors.New("user not found")
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
+	if err != nil {
+		return nil, "", errors.New("invalid password")
+	}
+
+	token, err := s.GenerateToken(user)
+	if err != nil {
+		return nil, "", err
+	}
+	return user, token, nil
+}
+
 func (s *AuthService) HashPassword(password string) (string, error) {
 	// Implement password hashing logic here (e.g., using bcrypt)
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
