@@ -1,4 +1,4 @@
-.PHONY: build run
+.PHONY: build run swagger
 -include .env
 build:
 	@go build -o bin/api ./cmd/api
@@ -17,3 +17,6 @@ migrate-force:
 
 air:
 	@air --build.cmd "go build -o bin/api cmd/api/main.go" --build.entrypoint "./bin/api"
+
+swagger:
+	@swag init -g cmd/api/main.go -o docs --parseInternal

@@ -18,12 +18,19 @@ import (
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/middleware"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/service"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
+
+	_ "github.com/MohakGupta2004/vipin-lms-backend/docs"
 )
 
 const (
 	serverShutdownTimeout = 15 * time.Second
 )
 
+// @title			Vipin LMS API
+// @version		1.0
+// @description	Backend API for the Vipin LMS platform.
+// @BasePath		/api/v1
 func main() {
 	cfg := config.MustLoad()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -59,6 +66,7 @@ func main() {
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
+	mux.Handle("GET /swagger/", httpSwagger.Handler(httpSwagger.URL("/swagger/doc.json")))
 
 	// auth routes
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.RegisterHandler)

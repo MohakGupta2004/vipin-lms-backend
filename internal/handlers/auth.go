@@ -34,6 +34,18 @@ func NewAuthHandler(userRepo *models.UserRepository, authService *service.AuthSe
 	}
 }
 
+// RegisterHandler godoc
+//
+//	@Summary		Register a new user
+//	@Description	Creates a student account and sets access_token and refresh_token as HttpOnly cookies.
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		RegisterRequest							true	"Registration details"
+//	@Success		201		{object}	utils.JSONResponse{data=models.User}	"User created"
+//	@Failure		400		{object}	utils.JSONResponse						"Malformed payload or missing required fields"
+//	@Failure		409		{object}	utils.JSONResponse						"User already exists"
+//	@Router			/auth/register [post]
 func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -66,6 +78,18 @@ func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusCreated, user)
 }
 
+// LoginHandler godoc
+//
+//	@Summary		Log in
+//	@Description	Authenticates a user and sets access_token and refresh_token as HttpOnly cookies.
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		LoginRequest							true	"Login credentials"
+//	@Success		200		{object}	utils.JSONResponse{data=models.User}	"Logged in"
+//	@Failure		400		{object}	utils.JSONResponse						"Malformed payload or missing required fields"
+//	@Failure		401		{object}	utils.JSONResponse						"Invalid credentials"
+//	@Router			/auth/login [post]
 func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// Implement login logic here
 	var req LoginRequest
@@ -99,6 +123,17 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusOK, user)
 }
 
+// RefreshTokenHandler godoc
+//
+//	@Summary		Refresh tokens
+//	@Description	Reads the refresh_token cookie and issues new access_token and refresh_token cookies.
+//	@Description	The refresh_token cookie is sent automatically by the browser after login/register.
+//	@Tags			auth
+//	@Produce		json
+//	@Success		202	{object}	utils.JSONResponse{data=string}	"Tokens refreshed"
+//	@Failure		400	{object}	utils.JSONResponse				"Missing/invalid refresh token or user not found"
+//	@Failure		500	{object}	utils.JSONResponse				"Failed to generate new tokens"
+//	@Router			/auth/refresh [post]
 func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
