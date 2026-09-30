@@ -15,6 +15,7 @@ import (
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/config"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/database"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/handlers"
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/middleware"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/service"
 )
@@ -50,13 +51,17 @@ func main() {
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry) // Set the access token expiry duration
 
+	// middlewares
+	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
+
 	// handlerFunctions
 	authHandler := handlers.NewAuthHandler(userRepo, authService)
 
 	// handlers
-	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
+	mux.Handle("GET /api/v1/healthz", authMiddleware.RequireAuth(http.HandlerFunc(handlers.HealthHandler)))
 	mux.HandleFunc("POST /api/v1/register", authHandler.RegisterHandler)
 	mux.HandleFunc("POST /api/v1/login", authHandler.LoginHandler)
+
 	srv := http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      mux,

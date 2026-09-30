@@ -20,7 +20,7 @@ func WriteJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) 
 		response.Data = data
 	} else {
 		response.Status = "error"
-		response.Message = data.(string)
+		response.Message = data.(string) // Assuming data is a string for error messages
 	}
 	json.NewEncoder(w).Encode(response)
 }

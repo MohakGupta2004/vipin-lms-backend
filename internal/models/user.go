@@ -63,3 +63,18 @@ func (r *UserRepository) GetUserByEmail(email string, ctx context.Context) (*Use
 
 	return user, nil
 }
+func (r *UserRepository) GetUserById(id string, ctx context.Context) (*User, error) {
+	query := "SELECT id, first_name, last_name, email, password, last_login_at FROM users WHERE id = $1"
+	row := r.db.QueryRowContext(ctx, query, id)
+
+	user := &User{}
+	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.LastLoginAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // User not found
+		}
+		return nil, err
+	}
+
+	return user, nil
+}
