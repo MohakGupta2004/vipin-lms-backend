@@ -78,3 +78,19 @@ func (r *UserRepository) GetUserById(id string, ctx context.Context) (*User, err
 
 	return user, nil
 }
+
+func (r *UserRepository) UpdateRefreshToken(userId, refreshToken string, ctx context.Context) (*User, error) {
+	query := "UPDATE users SET refresh_token = $1 WHERE id = $2 RETURNING id, first_name, last_name, email, password, last_login_at"
+	row := r.db.QueryRowContext(ctx, query, refreshToken, userId)
+
+	user := &User{}
+	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.LastLoginAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // User not found
+		}
+		return nil, err
+	}
+
+	return user, nil
+}

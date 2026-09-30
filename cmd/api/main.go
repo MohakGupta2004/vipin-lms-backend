@@ -49,18 +49,21 @@ func main() {
 	userRepo := models.NewUserRepository(db)
 
 	// services
-	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry) // Set the access token expiry duration
+	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
 
 	// middlewares
-	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
+	_ = middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
 
 	// handlerFunctions
 	authHandler := handlers.NewAuthHandler(userRepo, authService)
 
 	// handlers
-	mux.Handle("GET /api/v1/healthz", authMiddleware.RequireAuth(http.HandlerFunc(handlers.HealthHandler)))
-	mux.HandleFunc("POST /api/v1/register", authHandler.RegisterHandler)
-	mux.HandleFunc("POST /api/v1/login", authHandler.LoginHandler)
+	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
+
+	// auth routes
+	mux.HandleFunc("POST /api/v1/auth/register", authHandler.RegisterHandler)
+	mux.HandleFunc("POST /api/v1/auth/login", authHandler.LoginHandler)
+	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.RefreshTokenHandler)
 
 	srv := http.Server{
 		Addr:         ":" + cfg.Port,
