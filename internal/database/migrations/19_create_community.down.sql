@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS post_links;
+DROP TABLE IF EXISTS posts;

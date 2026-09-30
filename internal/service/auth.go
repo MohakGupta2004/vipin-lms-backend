@@ -98,6 +98,7 @@ func (s *AuthService) GenerateTokens(user *models.User) (string, string, error) 
 	claims := jwt.MapClaims{
 		"sub":      user.ID,
 		"username": user.Email,
+		"role":     user.Role,
 		"exp":      expirationTime.Unix(),
 		"iat":      time.Now().Unix(),
 	}
