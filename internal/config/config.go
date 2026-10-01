@@ -21,9 +21,10 @@ type EnvConfig struct {
 
 func MustLoad() EnvConfig {
 	var cfg EnvConfig
+	// .env is optional; env vars may come from the environment (e.g. docker compose)
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Println("No .env file found, using environment variables")
 	}
 	cfg.DBUrl = os.Getenv("DATABASE_URL")
 	cfg.Port = os.Getenv("PORT")
