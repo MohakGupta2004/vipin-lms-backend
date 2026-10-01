@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -17,6 +18,7 @@ type EnvConfig struct {
 	AccessTokenExpiry  time.Duration `env:"ACCESS_TOKEN_EXPIRY"`
 	RefreshTokenExpiry time.Duration `env:"REFRESH_TOKEN_EXPIRY"`
 	RefreshSecretKey   string        `env:"REFRESH_SECRET_KEY"`
+	CORSAllowedOrigins []string      `env:"CORS_ALLOWED_ORIGINS"`
 }
 
 func MustLoad() EnvConfig {
@@ -45,6 +47,12 @@ func MustLoad() EnvConfig {
 		log.Fatal("Error parsing REFRESH_TOKEN_EXPIRY")
 	}
 	cfg.RefreshSecretKey = os.Getenv("REFRESH_SECRET_KEY")
+	// comma-separated list of browser origins allowed to call the API
+	origins := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if origins == "" {
+		origins = "http://localhost:3001"
+	}
+	cfg.CORSAllowedOrigins = strings.Split(origins, ",")
 	if cfg.DBUrl == "" {
 		log.Fatal("DATABASE_URL is not set in the environment variables")
 	}
