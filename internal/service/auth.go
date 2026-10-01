@@ -69,12 +69,12 @@ func (s *AuthService) Login(email, password string) (*models.User, string, strin
 		return nil, "", "", err
 	}
 	if user == nil {
-		return nil, "", "", errors.New("user not found")
+		return nil, "", "", errors.New("invalid email or password")
 	}
 
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 	if err != nil {
-		return nil, "", "", errors.New("invalid password")
+		return nil, "", "", errors.New("invalid email or password")
 	}
 
 	token, refresh, err := s.GenerateTokens(user)
