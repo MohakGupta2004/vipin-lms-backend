@@ -94,6 +94,27 @@ definitions:
       title:
         type: string
     type: object
+  models.CourseNote:
+    properties:
+      courseId:
+        type: string
+      createdAt:
+        type: string
+      description:
+        type: string
+      fileName:
+        type: string
+      id:
+        type: string
+      sizeBytes:
+        type: integer
+      title:
+        type: string
+      uploadedBy:
+        type: string
+      uploaderName:
+        type: string
+    type: object
   models.Enrollment:
     properties:
       courseId:
@@ -375,6 +396,120 @@ paths:
       summary: Create a course
       tags:
       - courses
+  /courses/{id}/notes:
+    get:
+      description: Returns the PDF notes of a course, newest first. Only the course
+        instructor and enrolled students can see them.
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Max notes to return (default 50, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Number of notes to skip (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Notes
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.CourseNote'
+                  type: array
+              type: object
+        "400":
+          description: Invalid limit or offset
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not enrolled in this course
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List a course's notes
+      tags:
+      - notes
+    post:
+      consumes:
+      - multipart/form-data
+      description: Instructor uploads a PDF note to a course they teach. Max 25 MB.
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Note title (max 200 characters)
+        in: formData
+        name: title
+        required: true
+        type: string
+      - description: Short description (max 2000 characters)
+        in: formData
+        name: description
+        type: string
+      - description: PDF file
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Note uploaded
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.CourseNote'
+              type: object
+        "400":
+          description: Invalid form, file is not a PDF, or too large
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the instructor of this course
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Upload a course note
+      tags:
+      - notes
   /courses/{id}/status:
     patch:
       consumes:
@@ -609,6 +744,78 @@ paths:
       summary: List exams
       tags:
       - exams
+  /notes/{id}:
+    delete:
+      description: Instructor deletes a note they uploaded. The PDF is removed too.
+      parameters:
+      - description: Note ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Note deleted
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Note not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Delete a note
+      tags:
+      - notes
+  /notes/{id}/file:
+    get:
+      description: Streams the PDF. Only the course instructor and enrolled students
+        can download it.
+      parameters:
+      - description: Note ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/pdf
+      responses:
+        "200":
+          description: PDF file
+          schema:
+            type: file
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Note not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Download a note
+      tags:
+      - notes
   /posts:
     get:
       description: Returns posts from free courses, courses the user is enrolled in,

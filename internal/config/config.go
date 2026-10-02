@@ -19,6 +19,7 @@ type EnvConfig struct {
 	RefreshTokenExpiry time.Duration `env:"REFRESH_TOKEN_EXPIRY"`
 	RefreshSecretKey   string        `env:"REFRESH_SECRET_KEY"`
 	CORSAllowedOrigins []string      `env:"CORS_ALLOWED_ORIGINS"`
+	GCSBucketName      string        `env:"GCS_BUCKET_NAME"`
 }
 
 func MustLoad() EnvConfig {
@@ -53,6 +54,10 @@ func MustLoad() EnvConfig {
 		origins = "http://localhost:3001"
 	}
 	cfg.CORSAllowedOrigins = strings.Split(origins, ",")
+	cfg.GCSBucketName = os.Getenv("GCS_BUCKET_NAME")
+	if cfg.GCSBucketName == "" {
+		cfg.GCSBucketName = "vipin-lms"
+	}
 	if cfg.DBUrl == "" {
 		log.Fatal("DATABASE_URL is not set in the environment variables")
 	}

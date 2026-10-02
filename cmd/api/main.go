@@ -18,6 +18,7 @@ import (
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/middleware"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/service"
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/storage"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "github.com/MohakGupta2004/vipin-lms-backend/docs"
@@ -50,6 +51,12 @@ func main() {
 	slog.SetDefault(logger)
 
 	fmt.Println("DATABASE CONNECTED")
+
+	pdfStore, err := storage.NewGCSPDFStore(ctx, cfg.GCSBucketName)
+	if err != nil {
+		panic(err)
+	}
+
 	mux := http.NewServeMux()
 
 	// repositories
@@ -58,6 +65,7 @@ func main() {
 	courseRepo := models.NewCourseRepository(db)
 	examRepo := models.NewExamRepository(db)
 	enrollmentRepo := models.NewEnrollmentRepository(db)
+	courseNoteRepo := models.NewCourseNoteRepository(db)
 
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
@@ -65,6 +73,7 @@ func main() {
 	postService := service.NewPostService(postRepo)
 	courseService := service.NewCourseService(courseRepo)
 	enrollmentService := service.NewEnrollmentService(enrollmentRepo)
+	courseNoteService := service.NewCourseNoteService(courseNoteRepo, pdfStore)
 
 	// middlewares
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
@@ -75,6 +84,7 @@ func main() {
 	courseHandler := handlers.NewCourseHandler(courseService)
 	examHandler := handlers.NewExamHandler(examRepo)
 	enrollmentHandler := handlers.NewEnrollmentHandler(enrollmentService)
+	courseNoteHandler := handlers.NewCourseNoteHandler(courseNoteService)
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
@@ -103,6 +113,12 @@ func main() {
 	mux.Handle("GET /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.ListEnrollments)))
 	mux.Handle("PATCH /api/v1/enrollments/{id}", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.UpdateEnrollmentStatus)))
 
+	// course note routes (instructor uploads; instructor and enrolled students read)
+	mux.Handle("POST /api/v1/courses/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(courseNoteHandler.UploadNote)))
+	mux.Handle("GET /api/v1/courses/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(courseNoteHandler.ListNotes)))
+	mux.Handle("GET /api/v1/notes/{id}/file", authMiddleware.RequireAuth(http.HandlerFunc(courseNoteHandler.DownloadNote)))
+	mux.Handle("DELETE /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(courseNoteHandler.DeleteNote)))
+
 	srv := http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      middleware.CORS(cfg.CORSAllowedOrigins, mux),
@@ -129,6 +145,9 @@ func main() {
 		logger.Error("server shutdown failed", "err", err)
 	}
 
+	if err := pdfStore.Close(); err != nil {
+		logger.Error("closing storage client failed", "err", err)
+	}
 	db.Close()
 	logger.Info("bye")
 }

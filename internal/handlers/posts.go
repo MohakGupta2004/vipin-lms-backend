@@ -147,6 +147,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, service.ErrForbidden):
 		utils.WriteJSONResponse(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, service.ErrPostNotFound),
+		errors.Is(err, service.ErrNoteNotFound),
 		errors.Is(err, service.ErrCourseNotFound),
 		errors.Is(err, service.ErrEnrollmentNotFound):
 		utils.WriteJSONResponse(w, http.StatusNotFound, err.Error())
