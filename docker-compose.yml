@@ -36,6 +36,14 @@ services:
       ACCESS_TOKEN_EXPIRY: ${ACCESS_TOKEN_EXPIRY:-14m}
       REFRESH_TOKEN_EXPIRY: ${REFRESH_TOKEN_EXPIRY:-7}
       REFRESH_SECRET_KEY: ${REFRESH_SECRET_KEY:-your_refresh_secret_key_here}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3001}
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-vipin-lms}
+      # Application Default Credentials: the key file is mounted read-only below.
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-key.json
+    volumes:
+      # Host path to a service-account key with access to the bucket (roles/storage.objectAdmin).
+      # Must be an existing file, otherwise Docker creates a directory in its place.
+      - ${GCP_CREDENTIALS_FILE:?set GCP_CREDENTIALS_FILE to your service-account key path}:/secrets/gcp-key.json:ro
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     depends_on:

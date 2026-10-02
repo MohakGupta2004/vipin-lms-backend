@@ -31,3 +31,6 @@ go.work.sum
 # .idea/
 # .vscode/
 bin/
+# GCP service-account keys
+*-key.json
+gcp-*.json

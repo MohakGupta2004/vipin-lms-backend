@@ -2,3 +2,5 @@
 .env
 bin
 tmp
+*-key.json
+gcp-*.json
