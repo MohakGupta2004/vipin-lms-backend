@@ -1025,6 +1025,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
+                    },
+                    "503": {
+                        "description": "File storage is disabled (GCS_ENABLE is not true)",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
                     }
                 }
             }
@@ -1090,6 +1096,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
+                    },
+                    "503": {
+                        "description": "File storage is disabled (GCS_ENABLE is not true)",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
                     }
                 }
             }
@@ -1134,6 +1146,12 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "File storage is disabled (GCS_ENABLE is not true)",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }

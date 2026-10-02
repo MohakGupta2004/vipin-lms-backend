@@ -30,6 +30,8 @@ var (
 	ErrPDFTooLarge = fmt.Errorf("PDF must be at most %d MB", MaxPDFSize>>20)
 	// ErrInvalidFolder means the target folder is empty or unsafe.
 	ErrInvalidFolder = errors.New("invalid storage folder")
+	// ErrStorageDisabled means file storage is switched off (GCS_ENABLE is not true).
+	ErrStorageDisabled = errors.New("file storage is disabled")
 	// ErrObjectNotFound means the stored object does not exist.
 	ErrObjectNotFound = errors.New("stored object not found")
 )
@@ -44,6 +46,8 @@ type UploadedPDF struct {
 
 // PDFStore stores, reads and deletes PDF files.
 type PDFStore interface {
+	// Enabled reports whether files can be stored. When false every file operation returns ErrStorageDisabled.
+	Enabled() bool
 	UploadPDF(ctx context.Context, folder, originalName string, r io.Reader) (*UploadedPDF, error)
 	// OpenPDF streams a stored object. Returns ErrObjectNotFound if it is gone. Caller must Close.
 	OpenPDF(ctx context.Context, object string) (io.ReadCloser, error)
@@ -60,6 +64,27 @@ type GCSPDFStore struct {
 }
 
 var _ PDFStore = (*GCSPDFStore)(nil)
+
+func (u *GCSPDFStore) Enabled() bool { return true }
+
+// DisabledPDFStore is used when GCS_ENABLE is not true. It never touches the network.
+type DisabledPDFStore struct{}
+
+var _ PDFStore = DisabledPDFStore{}
+
+func (DisabledPDFStore) Enabled() bool { return false }
+
+func (DisabledPDFStore) UploadPDF(context.Context, string, string, io.Reader) (*UploadedPDF, error) {
+	return nil, ErrStorageDisabled
+}
+
+func (DisabledPDFStore) OpenPDF(context.Context, string) (io.ReadCloser, error) {
+	return nil, ErrStorageDisabled
+}
+
+func (DisabledPDFStore) DeletePDF(context.Context, string) error { return ErrStorageDisabled }
+
+func (DisabledPDFStore) Close() error { return nil }
 
 func NewGCSPDFStore(ctx context.Context, bucket string) (*GCSPDFStore, error) {
 	if strings.TrimSpace(bucket) == "" {

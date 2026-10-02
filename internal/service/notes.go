@@ -22,6 +22,8 @@ const (
 )
 
 var (
+	// ErrStorageDisabled means PDF storage is switched off. Safe to show the client.
+	ErrStorageDisabled = storage.ErrStorageDisabled
 	// ErrNoteNotFound means the note does not exist, or the user may not see it.
 	ErrNoteNotFound = errors.New("note not found")
 	// ErrLessonNotFound means the lesson does not exist, or the user may not see it.
@@ -46,6 +48,9 @@ func NewNoteService(noteRepo *models.NoteRepository, lessonRepo *models.LessonRe
 func (s *NoteService) UploadNote(ctx context.Context, user *models.User, lessonID, title, description, fileName string, file io.Reader) (*models.Note, error) {
 	if user.Role != models.RoleInstructor {
 		return nil, ErrForbidden
+	}
+	if !s.store.Enabled() {
+		return nil, ErrStorageDisabled
 	}
 	if !uuidPattern.MatchString(lessonID) {
 		return nil, ErrLessonNotFound
@@ -152,6 +157,10 @@ func (s *NoteService) OpenNote(ctx context.Context, user *models.User, noteID st
 func (s *NoteService) DeleteNote(ctx context.Context, user *models.User, noteID string) error {
 	if user.Role != models.RoleInstructor {
 		return ErrForbidden
+	}
+	// Deleting the row while storage is off would leave the file behind forever.
+	if !s.store.Enabled() {
+		return ErrStorageDisabled
 	}
 	note, err := s.getNote(ctx, noteID)
 	if err != nil {

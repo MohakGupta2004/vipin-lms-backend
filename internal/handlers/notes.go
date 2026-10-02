@@ -50,6 +50,7 @@ func NewNoteHandler(noteService *service.NoteService) *NoteHandler {
 //	@Failure		403			{object}	utils.JSONResponse						"Not an instructor"
 //	@Failure		404			{object}	utils.JSONResponse						"Lesson not found, or not in a course this user teaches"
 //	@Failure		500			{object}	utils.JSONResponse						"Internal server error"
+//	@Failure		503			{object}	utils.JSONResponse						"File storage is disabled (GCS_ENABLE is not true)"
 //	@Router			/lessons/{id}/notes [post]
 func (h *NoteHandler) UploadNote(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
@@ -141,6 +142,7 @@ func (h *NoteHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
 //	@Failure		401	{object}	utils.JSONResponse	"Not logged in"
 //	@Failure		404	{object}	utils.JSONResponse	"Note not found, or not visible to this user"
 //	@Failure		500	{object}	utils.JSONResponse	"Internal server error"
+//	@Failure		503	{object}	utils.JSONResponse	"File storage is disabled (GCS_ENABLE is not true)"
 //	@Router			/notes/{id}/file [get]
 func (h *NoteHandler) DownloadNote(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
@@ -182,6 +184,7 @@ func (h *NoteHandler) DownloadNote(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403	{object}	utils.JSONResponse				"Not an instructor"
 //	@Failure		404	{object}	utils.JSONResponse				"Note not found"
 //	@Failure		500	{object}	utils.JSONResponse				"Internal server error"
+//	@Failure		503	{object}	utils.JSONResponse				"File storage is disabled (GCS_ENABLE is not true)"
 //	@Router			/notes/{id} [delete]
 func (h *NoteHandler) DeleteNote(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())

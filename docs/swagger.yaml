@@ -885,6 +885,10 @@ paths:
           description: Internal server error
           schema:
             $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: File storage is disabled (GCS_ENABLE is not true)
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
       summary: Share a PDF note on a lesson
       tags:
       - notes
@@ -925,6 +929,10 @@ paths:
           description: Internal server error
           schema:
             $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: File storage is disabled (GCS_ENABLE is not true)
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
       summary: Delete a note
       tags:
       - notes
@@ -955,6 +963,10 @@ paths:
             $ref: '#/definitions/utils.JSONResponse'
         "500":
           description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: File storage is disabled (GCS_ENABLE is not true)
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Download a note

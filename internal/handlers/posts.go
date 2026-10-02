@@ -154,6 +154,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		utils.WriteJSONResponse(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled):
 		utils.WriteJSONResponse(w, http.StatusConflict, err.Error())
+	case errors.Is(err, service.ErrStorageDisabled):
+		utils.WriteJSONResponse(w, http.StatusServiceUnavailable, err.Error())
 	default:
 		slog.Error("request failed", "err", err)
 		utils.WriteJSONResponse(w, http.StatusInternalServerError, "internal server error")

@@ -52,9 +52,16 @@ func main() {
 
 	fmt.Println("DATABASE CONNECTED")
 
-	pdfStore, err := storage.NewGCSPDFStore(ctx, cfg.GCSBucketName)
-	if err != nil {
-		panic(err)
+	// PDF storage is opt-in: without GCS_ENABLE=true no Google client is created and no credentials are needed.
+	var pdfStore storage.PDFStore = storage.DisabledPDFStore{}
+	if cfg.GCSEnabled {
+		pdfStore, err = storage.NewGCSPDFStore(ctx, cfg.GCSBucketName)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("GCS STORAGE ENABLED, BUCKET:", cfg.GCSBucketName)
+	} else {
+		fmt.Println("GCS STORAGE DISABLED (set GCS_ENABLE=true to enable PDF uploads)")
 	}
 
 	mux := http.NewServeMux()
