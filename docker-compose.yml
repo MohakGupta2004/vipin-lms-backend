@@ -38,8 +38,6 @@ services:
       REFRESH_SECRET_KEY: ${REFRESH_SECRET_KEY:-your_refresh_secret_key_here}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3001}
       GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-vipin-lms}
-      # Application Default Credentials: the key file is mounted read-only below.
-      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-key.json
     volumes:
       # Host path to a service-account key with access to the bucket (roles/storage.objectAdmin).
       # Must be an existing file, otherwise Docker creates a directory in its place.
