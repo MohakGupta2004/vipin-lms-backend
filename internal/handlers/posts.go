@@ -150,6 +150,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrNoteNotFound),
 		errors.Is(err, service.ErrLessonNotFound),
 		errors.Is(err, service.ErrCourseNotFound),
+		errors.Is(err, service.ErrQuizNotFound),
 		errors.Is(err, service.ErrEnrollmentNotFound):
 		utils.WriteJSONResponse(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled):

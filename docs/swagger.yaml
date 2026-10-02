@@ -43,6 +43,13 @@ definitions:
       title:
         type: string
     type: object
+  handlers.CreateOptionRequest:
+    properties:
+      isCorrect:
+        type: boolean
+      optionText:
+        type: string
+    type: object
   handlers.CreatePostRequest:
     properties:
       content:
@@ -53,6 +60,40 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  handlers.CreateQuestionRequest:
+    properties:
+      explanation:
+        description: shown to the student after submitting
+        type: string
+      options:
+        items:
+          $ref: '#/definitions/handlers.CreateOptionRequest'
+        type: array
+      questionText:
+        type: string
+    type: object
+  handlers.CreateQuizRequest:
+    properties:
+      description:
+        type: string
+      isFree:
+        type: boolean
+      passPercent:
+        description: defaults to 70
+        type: integer
+      questions:
+        items:
+          $ref: '#/definitions/handlers.CreateQuestionRequest'
+        type: array
+      status:
+        description: draft or published, defaults to published
+        type: string
+      timeLimitSec:
+        description: omit for an untimed quiz
+        type: integer
+      title:
+        type: string
     type: object
   handlers.LoginRequest:
     properties:
@@ -72,6 +113,20 @@ definitions:
       password:
         type: string
     type: object
+  handlers.SubmitAnswerRequest:
+    properties:
+      optionId:
+        type: string
+      questionId:
+        type: string
+    type: object
+  handlers.SubmitAttemptRequest:
+    properties:
+      answers:
+        items:
+          $ref: '#/definitions/handlers.SubmitAnswerRequest'
+        type: array
+    type: object
   handlers.UpdateCourseStatusRequest:
     properties:
       status:
@@ -82,6 +137,26 @@ definitions:
     properties:
       status:
         description: active, completed, expired or cancelled
+        type: string
+    type: object
+  handlers.UpdateQuizStatusRequest:
+    properties:
+      status:
+        description: draft or published
+        type: string
+    type: object
+  models.AttemptAnswer:
+    properties:
+      correctOptionId:
+        type: string
+      explanation:
+        type: string
+      isCorrect:
+        type: boolean
+      questionId:
+        type: string
+      selectedOptionId:
+        description: nil = skipped
         type: string
     type: object
   models.Course:
@@ -204,6 +279,87 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  models.Question:
+    properties:
+      explanation:
+        type: string
+      id:
+        type: string
+      options:
+        items:
+          $ref: '#/definitions/models.QuestionOption'
+        type: array
+      position:
+        type: integer
+      questionText:
+        type: string
+    type: object
+  models.QuestionOption:
+    properties:
+      id:
+        type: string
+      isCorrect:
+        type: boolean
+      optionText:
+        type: string
+      position:
+        type: integer
+    type: object
+  models.Quiz:
+    properties:
+      courseId:
+        type: string
+      createdAt:
+        type: string
+      createdBy:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      isFree:
+        type: boolean
+      lessonId:
+        type: string
+      passPercent:
+        type: integer
+      questionCount:
+        type: integer
+      questions:
+        items:
+          $ref: '#/definitions/models.Question'
+        type: array
+      status:
+        type: string
+      timeLimitSec:
+        description: nil = untimed
+        type: integer
+      title:
+        type: string
+    type: object
+  models.QuizAttempt:
+    properties:
+      answers:
+        items:
+          $ref: '#/definitions/models.AttemptAnswer'
+        type: array
+      id:
+        type: string
+      passed:
+        type: boolean
+      quizId:
+        type: string
+      score:
+        type: integer
+      startedAt:
+        type: string
+      submittedAt:
+        type: string
+      total:
+        type: integer
+      userId:
+        type: string
     type: object
   models.Role:
     enum:
@@ -892,6 +1048,104 @@ paths:
       summary: Share a PDF note on a lesson
       tags:
       - notes
+  /lessons/{id}/quizzes:
+    get:
+      description: Returns the quizzes of a lesson without their questions. Only the
+        course instructor and enrolled students can see them. Students see published
+        quizzes only.
+      parameters:
+      - description: Lesson ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Quizzes
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.Quiz'
+                  type: array
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not enrolled in this course
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Lesson not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List a lesson's quizzes
+      tags:
+      - quizzes
+    post:
+      consumes:
+      - application/json
+      description: Instructor creates a quiz with all its questions and options in
+        one request, on a lesson of a course they teach. Each question needs 2 to
+        10 options with exactly one correct. Questions and options keep the order
+        they are sent in. Published by default.
+      parameters:
+      - description: Lesson ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Quiz with questions and options
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateQuizRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Quiz created
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Quiz'
+              type: object
+        "400":
+          description: Malformed payload or invalid fields
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Lesson not found, or not in a course this user teaches
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Create a quiz on a lesson
+      tags:
+      - quizzes
   /notes/{id}:
     delete:
       description: Instructor deletes a note they uploaded. The PDF is removed too.
@@ -1097,4 +1351,191 @@ paths:
       summary: Delete a post
       tags:
       - posts
+  /quizzes/{id}:
+    get:
+      description: Returns the quiz with its questions and options in order. The instructor
+        also gets isCorrect and explanations; students never do before submitting.
+      parameters:
+      - description: Quiz ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Quiz with questions
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Quiz'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Quiz not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Get a quiz with its questions
+      tags:
+      - quizzes
+  /quizzes/{id}/attempts:
+    get:
+      description: Returns the logged-in student's past attempts at a quiz, newest
+        first. Each attempt has its result and, per question, the selected option,
+        the correct option and the explanation.
+      parameters:
+      - description: Quiz ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Attempts
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.QuizAttempt'
+                  type: array
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not a student
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Quiz not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List my attempts at a quiz
+      tags:
+      - quizzes
+    post:
+      consumes:
+      - application/json
+      description: Student sends all answers in one request and gets the graded result
+        back, with the correct option and explanation for every question. Questions
+        left out count as skipped (wrong). Every submission is saved as a new attempt.
+      parameters:
+      - description: Quiz ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Selected option per question
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SubmitAttemptRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Graded attempt
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.QuizAttempt'
+              type: object
+        "400":
+          description: Malformed payload, or answer not part of this quiz
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not a student
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Quiz not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Submit answers to a quiz
+      tags:
+      - quizzes
+  /quizzes/{id}/status:
+    patch:
+      consumes:
+      - application/json
+      description: Instructor of the course publishes a quiz or moves it back to draft.
+        Students only see published quizzes.
+      parameters:
+      - description: Quiz ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateQuizStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Quiz updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Quiz'
+              type: object
+        "400":
+          description: Malformed payload or invalid status
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Quiz not found, or not in a course this user teaches
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Change quiz status
+      tags:
+      - quizzes
 swagger: "2.0"

@@ -74,6 +74,7 @@ func main() {
 	enrollmentRepo := models.NewEnrollmentRepository(db)
 	lessonRepo := models.NewLessonRepository(db)
 	noteRepo := models.NewNoteRepository(db)
+	quizRepo := models.NewQuizRepository(db)
 
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
@@ -83,6 +84,7 @@ func main() {
 	enrollmentService := service.NewEnrollmentService(enrollmentRepo)
 	lessonService := service.NewLessonService(lessonRepo, noteRepo)
 	noteService := service.NewNoteService(noteRepo, lessonRepo, pdfStore)
+	quizService := service.NewQuizService(quizRepo, lessonRepo)
 
 	// middlewares
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
@@ -95,6 +97,7 @@ func main() {
 	enrollmentHandler := handlers.NewEnrollmentHandler(enrollmentService)
 	lessonHandler := handlers.NewLessonHandler(lessonService)
 	noteHandler := handlers.NewNoteHandler(noteService)
+	quizHandler := handlers.NewQuizHandler(quizService)
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
@@ -130,6 +133,14 @@ func main() {
 	mux.Handle("GET /api/v1/courses/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.ListNotes)))
 	mux.Handle("GET /api/v1/notes/{id}/file", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DownloadNote)))
 	mux.Handle("DELETE /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DeleteNote)))
+
+	// quizzes on lessons (instructor creates; enrolled students take them)
+	mux.Handle("POST /api/v1/lessons/{id}/quizzes", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.CreateQuiz)))
+	mux.Handle("GET /api/v1/lessons/{id}/quizzes", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.ListQuizzes)))
+	mux.Handle("PATCH /api/v1/quizzes/{id}/status", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.UpdateQuizStatus))) // instructor only
+	mux.Handle("GET /api/v1/quizzes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.GetQuiz)))
+	mux.Handle("POST /api/v1/quizzes/{id}/attempts", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.SubmitAttempt)))
+	mux.Handle("GET /api/v1/quizzes/{id}/attempts", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.ListAttempts)))
 
 	srv := http.Server{
 		Addr:         ":" + cfg.Port,
