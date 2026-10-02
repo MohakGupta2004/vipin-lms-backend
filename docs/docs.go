@@ -322,16 +322,16 @@ const docTemplate = `{
                 }
             }
         },
-        "/courses/{id}/notes": {
+        "/courses/{id}/lessons": {
             "get": {
-                "description": "Returns the PDF notes of a course, newest first. Only the course instructor and enrolled students can see them.",
+                "description": "Returns the course's lessons (chapters) in order, each with its PDF notes. Only the course instructor and enrolled students can see it. Students see published lessons only.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "notes"
+                    "lessons"
                 ],
-                "summary": "List a course's notes",
+                "summary": "List a course's lessons with their notes",
                 "parameters": [
                     {
                         "type": "string",
@@ -339,23 +339,11 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Max notes to return (default 50, max 100)",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Number of notes to skip (default 0)",
-                        "name": "offset",
-                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Notes",
+                        "description": "Lessons with notes",
                         "schema": {
                             "allOf": [
                                 {
@@ -367,18 +355,12 @@ const docTemplate = `{
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/models.CourseNote"
+                                                "$ref": "#/definitions/models.Lesson"
                                             }
                                         }
                                     }
                                 }
                             ]
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid limit or offset",
-                        "schema": {
-                            "$ref": "#/definitions/utils.JSONResponse"
                         }
                     },
                     "401": {
@@ -408,17 +390,17 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Instructor uploads a PDF note to a course they teach. Max 25 MB.",
+                "description": "Instructor adds a lesson to a course they teach. A lesson is a chapter: add as many PDF notes to it as needed with POST /lessons/{id}/notes. It goes at the end of the course and is published by default.",
                 "consumes": [
-                    "multipart/form-data"
+                    "application/json"
                 ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "notes"
+                    "lessons"
                 ],
-                "summary": "Upload a course note",
+                "summary": "Create a lesson (chapter)",
                 "parameters": [
                     {
                         "type": "string",
@@ -428,29 +410,18 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "type": "string",
-                        "description": "Note title (max 200 characters)",
-                        "name": "title",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Short description (max 2000 characters)",
-                        "name": "description",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "file",
-                        "description": "PDF file",
-                        "name": "file",
-                        "in": "formData",
-                        "required": true
+                        "description": "Lesson details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateLessonRequest"
+                        }
                     }
                 ],
                 "responses": {
                     "201": {
-                        "description": "Note uploaded",
+                        "description": "Lesson created",
                         "schema": {
                             "allOf": [
                                 {
@@ -460,7 +431,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.CourseNote"
+                                            "$ref": "#/definitions/models.Lesson"
                                         }
                                     }
                                 }
@@ -468,7 +439,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid form, file is not a PDF, or too large",
+                        "description": "Malformed payload or invalid fields",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -481,6 +452,98 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Not the instructor of this course",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Course not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/courses/{id}/notes": {
+            "get": {
+                "description": "Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. Only the course instructor and enrolled students can see them.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "List a course's notes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Course ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only notes of this lesson",
+                        "name": "lessonId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max notes to return (default 50, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of notes to skip (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Notes",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.Note"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid limit, offset or lessonId",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not enrolled in this course",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -872,6 +935,100 @@ const docTemplate = `{
                 }
             }
         },
+        "/lessons/{id}/notes": {
+            "post": {
+                "description": "Instructor uploads a PDF note to a lesson of a course they teach. Max 25 MB.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "Share a PDF note on a lesson",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Lesson ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Note title (max 200 characters)",
+                        "name": "title",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Short description (max 2000 characters)",
+                        "name": "description",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "file",
+                        "description": "PDF file",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Note uploaded",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Note"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid form, file is not a PDF, or too large",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an instructor",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Lesson not found, or not in a course this user teaches",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/notes/{id}": {
             "delete": {
                 "description": "Instructor deletes a note they uploaded. The PDF is removed too.",
@@ -1231,6 +1388,25 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.CreateLessonRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "short description of the chapter",
+                    "type": "string"
+                },
+                "isFree": {
+                    "type": "boolean"
+                },
+                "isPublished": {
+                    "description": "defaults to true",
+                    "type": "boolean"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.CreatePostRequest": {
             "type": "object",
             "properties": {
@@ -1329,38 +1505,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.CourseNote": {
-            "type": "object",
-            "properties": {
-                "courseId": {
-                    "type": "string"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "fileName": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "sizeBytes": {
-                    "type": "integer"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "uploadedBy": {
-                    "type": "string"
-                },
-                "uploaderName": {
-                    "type": "string"
-                }
-            }
-        },
         "models.Enrollment": {
             "type": "object",
             "properties": {
@@ -1401,6 +1545,79 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.Lesson": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "courseId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isFree": {
+                    "type": "boolean"
+                },
+                "isPublished": {
+                    "type": "boolean"
+                },
+                "lessonType": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Note"
+                    }
+                },
+                "position": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.Note": {
+            "type": "object",
+            "properties": {
+                "courseId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "fileName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lessonId": {
+                    "type": "string"
+                },
+                "sizeBytes": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "uploadedBy": {
+                    "type": "string"
+                },
+                "uploaderName": {
                     "type": "string"
                 }
             }

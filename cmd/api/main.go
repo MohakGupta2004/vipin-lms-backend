@@ -65,7 +65,8 @@ func main() {
 	courseRepo := models.NewCourseRepository(db)
 	examRepo := models.NewExamRepository(db)
 	enrollmentRepo := models.NewEnrollmentRepository(db)
-	courseNoteRepo := models.NewCourseNoteRepository(db)
+	lessonRepo := models.NewLessonRepository(db)
+	noteRepo := models.NewNoteRepository(db)
 
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
@@ -73,7 +74,8 @@ func main() {
 	postService := service.NewPostService(postRepo)
 	courseService := service.NewCourseService(courseRepo)
 	enrollmentService := service.NewEnrollmentService(enrollmentRepo)
-	courseNoteService := service.NewCourseNoteService(courseNoteRepo, pdfStore)
+	lessonService := service.NewLessonService(lessonRepo, noteRepo)
+	noteService := service.NewNoteService(noteRepo, lessonRepo, pdfStore)
 
 	// middlewares
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
@@ -84,7 +86,8 @@ func main() {
 	courseHandler := handlers.NewCourseHandler(courseService)
 	examHandler := handlers.NewExamHandler(examRepo)
 	enrollmentHandler := handlers.NewEnrollmentHandler(enrollmentService)
-	courseNoteHandler := handlers.NewCourseNoteHandler(courseNoteService)
+	lessonHandler := handlers.NewLessonHandler(lessonService)
+	noteHandler := handlers.NewNoteHandler(noteService)
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
@@ -113,11 +116,13 @@ func main() {
 	mux.Handle("GET /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.ListEnrollments)))
 	mux.Handle("PATCH /api/v1/enrollments/{id}", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.UpdateEnrollmentStatus)))
 
-	// course note routes (instructor uploads; instructor and enrolled students read)
-	mux.Handle("POST /api/v1/courses/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(courseNoteHandler.UploadNote)))
-	mux.Handle("GET /api/v1/courses/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(courseNoteHandler.ListNotes)))
-	mux.Handle("GET /api/v1/notes/{id}/file", authMiddleware.RequireAuth(http.HandlerFunc(courseNoteHandler.DownloadNote)))
-	mux.Handle("DELETE /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(courseNoteHandler.DeleteNote)))
+	// lessons (chapters) and their PDF notes (instructor writes; instructor and enrolled students read)
+	mux.Handle("POST /api/v1/courses/{id}/lessons", authMiddleware.RequireAuth(http.HandlerFunc(lessonHandler.CreateLesson)))
+	mux.Handle("GET /api/v1/courses/{id}/lessons", authMiddleware.RequireAuth(http.HandlerFunc(lessonHandler.ListLessons)))
+	mux.Handle("POST /api/v1/lessons/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.UploadNote)))
+	mux.Handle("GET /api/v1/courses/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.ListNotes)))
+	mux.Handle("GET /api/v1/notes/{id}/file", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DownloadNote)))
+	mux.Handle("DELETE /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DeleteNote)))
 
 	srv := http.Server{
 		Addr:         ":" + cfg.Port,

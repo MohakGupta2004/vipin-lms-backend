@@ -21,46 +21,34 @@ const (
 	cleanupTimeout           = 10 * time.Second
 )
 
-// ErrNoteNotFound means the note does not exist.
-var ErrNoteNotFound = errors.New("note not found")
+var (
+	// ErrNoteNotFound means the note does not exist, or the user may not see it.
+	ErrNoteNotFound = errors.New("note not found")
+	// ErrLessonNotFound means the lesson does not exist, or the user may not see it.
+	ErrLessonNotFound = errors.New("lesson not found")
+)
 
-type CourseNoteService struct {
-	noteRepo *models.CourseNoteRepository
-	store    storage.PDFStore
+type NoteService struct {
+	noteRepo   *models.NoteRepository
+	lessonRepo *models.LessonRepository
+	store      storage.PDFStore
 }
 
-func NewCourseNoteService(noteRepo *models.CourseNoteRepository, store storage.PDFStore) *CourseNoteService {
-	return &CourseNoteService{
-		noteRepo: noteRepo,
-		store:    store,
+func NewNoteService(noteRepo *models.NoteRepository, lessonRepo *models.LessonRepository, store storage.PDFStore) *NoteService {
+	return &NoteService{
+		noteRepo:   noteRepo,
+		lessonRepo: lessonRepo,
+		store:      store,
 	}
 }
 
-// requireCourseReader allows the course's instructor and students with a valid enrollment.
-func (s *CourseNoteService) requireCourseReader(ctx context.Context, user *models.User, courseID string) error {
-	if !uuidPattern.MatchString(courseID) {
-		return ErrCourseNotFound
-	}
-	isInstructor, isEnrolled, err := s.noteRepo.CourseAccess(ctx, courseID, user.ID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrCourseNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if !isInstructor && !isEnrolled {
-		return ErrForbidden
-	}
-	return nil
-}
-
-// UploadNote lets an instructor add a PDF note to a course they teach.
-func (s *CourseNoteService) UploadNote(ctx context.Context, user *models.User, courseID, title, description, fileName string, file io.Reader) (*models.CourseNote, error) {
+// UploadNote lets an instructor share a PDF on a lesson of a course they teach.
+func (s *NoteService) UploadNote(ctx context.Context, user *models.User, lessonID, title, description, fileName string, file io.Reader) (*models.Note, error) {
 	if user.Role != models.RoleInstructor {
 		return nil, ErrForbidden
 	}
-	if !uuidPattern.MatchString(courseID) {
-		return nil, ErrCourseNotFound
+	if !uuidPattern.MatchString(lessonID) {
+		return nil, ErrLessonNotFound
 	}
 
 	title = strings.TrimSpace(title)
@@ -75,18 +63,22 @@ func (s *CourseNoteService) UploadNote(ctx context.Context, user *models.User, c
 		return nil, fmt.Errorf("%w: description must be at most %d characters", ErrInvalidInput, maxNoteDescriptionLength)
 	}
 
-	isInstructor, _, err := s.noteRepo.CourseAccess(ctx, courseID, user.ID)
+	lesson, err := s.lessonRepo.GetLesson(ctx, lessonID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrCourseNotFound
+		return nil, ErrLessonNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !isInstructor {
-		return nil, ErrForbidden
+	// Not the teacher of this course: pretend the lesson does not exist.
+	if err := requireTeacher(ctx, s.lessonRepo, user, lesson.CourseID); err != nil {
+		if errors.Is(err, ErrForbidden) {
+			return nil, ErrLessonNotFound
+		}
+		return nil, err
 	}
 
-	uploaded, err := s.store.UploadPDF(ctx, "courses/"+courseID+"/notes", fileName, file)
+	uploaded, err := s.store.UploadPDF(ctx, "courses/"+lesson.CourseID+"/notes", fileName, file)
 	switch {
 	case errors.Is(err, storage.ErrInvalidPDF), errors.Is(err, storage.ErrPDFTooLarge):
 		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, err)
@@ -94,8 +86,9 @@ func (s *CourseNoteService) UploadNote(ctx context.Context, user *models.User, c
 		return nil, err
 	}
 
-	note := &models.CourseNote{
-		CourseID:     courseID,
+	note := &models.Note{
+		CourseID:     lesson.CourseID,
+		LessonID:     lesson.ID,
 		Title:        title,
 		Description:  description,
 		FileName:     pdfFileName(fileName, title),
@@ -112,26 +105,36 @@ func (s *CourseNoteService) UploadNote(ctx context.Context, user *models.User, c
 	return note, nil
 }
 
-// ListNotes returns a course's notes for its instructor or an enrolled student.
-func (s *CourseNoteService) ListNotes(ctx context.Context, user *models.User, courseID string, limit, offset int) ([]models.CourseNote, error) {
-	if err := s.requireCourseReader(ctx, user, courseID); err != nil {
+// ListNotes returns a course's PDF notes for its instructor or an enrolled student.
+// lessonID narrows the list to one lesson; empty means the whole course.
+func (s *NoteService) ListNotes(ctx context.Context, user *models.User, courseID, lessonID string, limit, offset int) ([]models.Note, error) {
+	if lessonID != "" && !uuidPattern.MatchString(lessonID) {
+		return nil, fmt.Errorf("%w: lessonId must be a valid id", ErrInvalidInput)
+	}
+	isTeacher, err := authorizeCourse(ctx, s.lessonRepo, user, courseID)
+	if err != nil {
 		return nil, err
 	}
-	return s.noteRepo.ListByCourse(ctx, courseID, limit, offset)
+	return s.noteRepo.ListByCourse(ctx, courseID, lessonID, isTeacher, limit, offset)
 }
 
 // OpenNote checks access and returns the note with its PDF stream. Caller must Close the stream.
-func (s *CourseNoteService) OpenNote(ctx context.Context, user *models.User, noteID string) (*models.CourseNote, io.ReadCloser, error) {
+func (s *NoteService) OpenNote(ctx context.Context, user *models.User, noteID string) (*models.Note, io.ReadCloser, error) {
 	note, err := s.getNote(ctx, noteID)
 	if err != nil {
 		return nil, nil, err
 	}
-	// A note in a course the user cannot access looks the same as a missing note.
-	if err := s.requireCourseReader(ctx, user, note.CourseID); err != nil {
-		if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) {
-			return nil, nil, ErrNoteNotFound
-		}
+
+	isTeacher, err := authorizeCourse(ctx, s.lessonRepo, user, note.CourseID)
+	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) {
+		return nil, nil, ErrNoteNotFound
+	}
+	if err != nil {
 		return nil, nil, err
+	}
+	// Students cannot open notes of lessons the instructor has not published.
+	if !isTeacher && !note.LessonPublished {
+		return nil, nil, ErrNoteNotFound
 	}
 
 	rc, err := s.store.OpenPDF(ctx, note.ObjectKey)
@@ -146,7 +149,7 @@ func (s *CourseNoteService) OpenNote(ctx context.Context, user *models.User, not
 }
 
 // DeleteNote lets the instructor who uploaded a note delete it.
-func (s *CourseNoteService) DeleteNote(ctx context.Context, user *models.User, noteID string) error {
+func (s *NoteService) DeleteNote(ctx context.Context, user *models.User, noteID string) error {
 	if user.Role != models.RoleInstructor {
 		return ErrForbidden
 	}
@@ -169,7 +172,7 @@ func (s *CourseNoteService) DeleteNote(ctx context.Context, user *models.User, n
 	return nil
 }
 
-func (s *CourseNoteService) getNote(ctx context.Context, noteID string) (*models.CourseNote, error) {
+func (s *NoteService) getNote(ctx context.Context, noteID string) (*models.Note, error) {
 	if !uuidPattern.MatchString(noteID) {
 		return nil, ErrNoteNotFound
 	}
@@ -181,7 +184,7 @@ func (s *CourseNoteService) getNote(ctx context.Context, noteID string) (*models
 }
 
 // deleteObject removes a stored file on a best-effort basis; a failure only leaves an orphan file.
-func (s *CourseNoteService) deleteObject(object string) {
+func (s *NoteService) deleteObject(object string) {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	if err := s.store.DeletePDF(ctx, object); err != nil {

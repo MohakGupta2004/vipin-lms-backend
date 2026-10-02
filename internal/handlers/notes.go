@@ -23,35 +23,35 @@ const (
 	maxNoteLimit        = 100
 )
 
-type CourseNoteHandler struct {
-	noteService *service.CourseNoteService
+type NoteHandler struct {
+	noteService *service.NoteService
 }
 
-func NewCourseNoteHandler(noteService *service.CourseNoteService) *CourseNoteHandler {
-	return &CourseNoteHandler{
+func NewNoteHandler(noteService *service.NoteService) *NoteHandler {
+	return &NoteHandler{
 		noteService: noteService,
 	}
 }
 
 // UploadNote godoc
 //
-//	@Summary		Upload a course note
-//	@Description	Instructor uploads a PDF note to a course they teach. Max 25 MB.
+//	@Summary		Share a PDF note on a lesson
+//	@Description	Instructor uploads a PDF note to a lesson of a course they teach. Max 25 MB.
 //	@Tags			notes
 //	@Accept			multipart/form-data
 //	@Produce		json
-//	@Param			id			path		string										true	"Course ID"
-//	@Param			title		formData	string										true	"Note title (max 200 characters)"
-//	@Param			description	formData	string										false	"Short description (max 2000 characters)"
-//	@Param			file		formData	file										true	"PDF file"
-//	@Success		201			{object}	utils.JSONResponse{data=models.CourseNote}	"Note uploaded"
-//	@Failure		400			{object}	utils.JSONResponse							"Invalid form, file is not a PDF, or too large"
-//	@Failure		401			{object}	utils.JSONResponse							"Not logged in"
-//	@Failure		403			{object}	utils.JSONResponse							"Not the instructor of this course"
-//	@Failure		404			{object}	utils.JSONResponse							"Course not found"
-//	@Failure		500			{object}	utils.JSONResponse							"Internal server error"
-//	@Router			/courses/{id}/notes [post]
-func (h *CourseNoteHandler) UploadNote(w http.ResponseWriter, r *http.Request) {
+//	@Param			id			path		string									true	"Lesson ID"
+//	@Param			title		formData	string									true	"Note title (max 200 characters)"
+//	@Param			description	formData	string									false	"Short description (max 2000 characters)"
+//	@Param			file		formData	file									true	"PDF file"
+//	@Success		201			{object}	utils.JSONResponse{data=models.Note}	"Note uploaded"
+//	@Failure		400			{object}	utils.JSONResponse						"Invalid form, file is not a PDF, or too large"
+//	@Failure		401			{object}	utils.JSONResponse						"Not logged in"
+//	@Failure		403			{object}	utils.JSONResponse						"Not an instructor"
+//	@Failure		404			{object}	utils.JSONResponse						"Lesson not found, or not in a course this user teaches"
+//	@Failure		500			{object}	utils.JSONResponse						"Internal server error"
+//	@Router			/lessons/{id}/notes [post]
+func (h *NoteHandler) UploadNote(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
 	if !ok {
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
@@ -90,20 +90,21 @@ func (h *CourseNoteHandler) UploadNote(w http.ResponseWriter, r *http.Request) {
 // ListNotes godoc
 //
 //	@Summary		List a course's notes
-//	@Description	Returns the PDF notes of a course, newest first. Only the course instructor and enrolled students can see them.
+//	@Description	Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. Only the course instructor and enrolled students can see them.
 //	@Tags			notes
 //	@Produce		json
-//	@Param			id		path		string											true	"Course ID"
-//	@Param			limit	query		int												false	"Max notes to return (default 50, max 100)"
-//	@Param			offset	query		int												false	"Number of notes to skip (default 0)"
-//	@Success		200		{object}	utils.JSONResponse{data=[]models.CourseNote}	"Notes"
-//	@Failure		400		{object}	utils.JSONResponse								"Invalid limit or offset"
-//	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
-//	@Failure		403		{object}	utils.JSONResponse								"Not enrolled in this course"
-//	@Failure		404		{object}	utils.JSONResponse								"Course not found"
-//	@Failure		500		{object}	utils.JSONResponse								"Internal server error"
+//	@Param			id			path		string									true	"Course ID"
+//	@Param			lessonId	query		string									false	"Only notes of this lesson"
+//	@Param			limit		query		int										false	"Max notes to return (default 50, max 100)"
+//	@Param			offset		query		int										false	"Number of notes to skip (default 0)"
+//	@Success		200			{object}	utils.JSONResponse{data=[]models.Note}	"Notes"
+//	@Failure		400			{object}	utils.JSONResponse						"Invalid limit, offset or lessonId"
+//	@Failure		401			{object}	utils.JSONResponse						"Not logged in"
+//	@Failure		403			{object}	utils.JSONResponse						"Not enrolled in this course"
+//	@Failure		404			{object}	utils.JSONResponse						"Course not found"
+//	@Failure		500			{object}	utils.JSONResponse						"Internal server error"
 //	@Router			/courses/{id}/notes [get]
-func (h *CourseNoteHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
+func (h *NoteHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
 	if !ok {
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
@@ -121,7 +122,7 @@ func (h *CourseNoteHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	notes, err := h.noteService.ListNotes(r.Context(), user, r.PathValue("id"), limit, offset)
+	notes, err := h.noteService.ListNotes(r.Context(), user, r.PathValue("id"), r.URL.Query().Get("lessonId"), limit, offset)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -141,7 +142,7 @@ func (h *CourseNoteHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
 //	@Failure		404	{object}	utils.JSONResponse	"Note not found, or not visible to this user"
 //	@Failure		500	{object}	utils.JSONResponse	"Internal server error"
 //	@Router			/notes/{id}/file [get]
-func (h *CourseNoteHandler) DownloadNote(w http.ResponseWriter, r *http.Request) {
+func (h *NoteHandler) DownloadNote(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
 	if !ok {
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
@@ -182,7 +183,7 @@ func (h *CourseNoteHandler) DownloadNote(w http.ResponseWriter, r *http.Request)
 //	@Failure		404	{object}	utils.JSONResponse				"Note not found"
 //	@Failure		500	{object}	utils.JSONResponse				"Internal server error"
 //	@Router			/notes/{id} [delete]
-func (h *CourseNoteHandler) DeleteNote(w http.ResponseWriter, r *http.Request) {
+func (h *NoteHandler) DeleteNote(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
 	if !ok {
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")

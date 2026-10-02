@@ -30,6 +30,19 @@ definitions:
       userId:
         type: string
     type: object
+  handlers.CreateLessonRequest:
+    properties:
+      content:
+        description: short description of the chapter
+        type: string
+      isFree:
+        type: boolean
+      isPublished:
+        description: defaults to true
+        type: boolean
+      title:
+        type: string
+    type: object
   handlers.CreatePostRequest:
     properties:
       content:
@@ -94,27 +107,6 @@ definitions:
       title:
         type: string
     type: object
-  models.CourseNote:
-    properties:
-      courseId:
-        type: string
-      createdAt:
-        type: string
-      description:
-        type: string
-      fileName:
-        type: string
-      id:
-        type: string
-      sizeBytes:
-        type: integer
-      title:
-        type: string
-      uploadedBy:
-        type: string
-      uploaderName:
-        type: string
-    type: object
   models.Enrollment:
     properties:
       courseId:
@@ -142,6 +134,54 @@ definitions:
       id:
         type: string
       name:
+        type: string
+    type: object
+  models.Lesson:
+    properties:
+      content:
+        type: string
+      courseId:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      isFree:
+        type: boolean
+      isPublished:
+        type: boolean
+      lessonType:
+        type: string
+      notes:
+        items:
+          $ref: '#/definitions/models.Note'
+        type: array
+      position:
+        type: integer
+      title:
+        type: string
+    type: object
+  models.Note:
+    properties:
+      courseId:
+        type: string
+      createdAt:
+        type: string
+      description:
+        type: string
+      fileName:
+        type: string
+      id:
+        type: string
+      lessonId:
+        type: string
+      sizeBytes:
+        type: integer
+      title:
+        type: string
+      uploadedBy:
+        type: string
+      uploaderName:
         type: string
     type: object
   models.Post:
@@ -396,15 +436,117 @@ paths:
       summary: Create a course
       tags:
       - courses
-  /courses/{id}/notes:
+  /courses/{id}/lessons:
     get:
-      description: Returns the PDF notes of a course, newest first. Only the course
-        instructor and enrolled students can see them.
+      description: Returns the course's lessons (chapters) in order, each with its
+        PDF notes. Only the course instructor and enrolled students can see it. Students
+        see published lessons only.
       parameters:
       - description: Course ID
         in: path
         name: id
         required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Lessons with notes
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.Lesson'
+                  type: array
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not enrolled in this course
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List a course's lessons with their notes
+      tags:
+      - lessons
+    post:
+      consumes:
+      - application/json
+      description: 'Instructor adds a lesson to a course they teach. A lesson is a
+        chapter: add as many PDF notes to it as needed with POST /lessons/{id}/notes.
+        It goes at the end of the course and is published by default.'
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Lesson details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateLessonRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Lesson created
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Lesson'
+              type: object
+        "400":
+          description: Malformed payload or invalid fields
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the instructor of this course
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Create a lesson (chapter)
+      tags:
+      - lessons
+  /courses/{id}/notes:
+    get:
+      description: Returns the PDF notes of a course, newest first, optionally for
+        one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. Only
+        the course instructor and enrolled students can see them.
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Only notes of this lesson
+        in: query
+        name: lessonId
         type: string
       - description: Max notes to return (default 50, max 100)
         in: query
@@ -425,11 +567,11 @@ paths:
             - properties:
                 data:
                   items:
-                    $ref: '#/definitions/models.CourseNote'
+                    $ref: '#/definitions/models.Note'
                   type: array
               type: object
         "400":
-          description: Invalid limit or offset
+          description: Invalid limit, offset or lessonId
           schema:
             $ref: '#/definitions/utils.JSONResponse'
         "401":
@@ -449,65 +591,6 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: List a course's notes
-      tags:
-      - notes
-    post:
-      consumes:
-      - multipart/form-data
-      description: Instructor uploads a PDF note to a course they teach. Max 25 MB.
-      parameters:
-      - description: Course ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Note title (max 200 characters)
-        in: formData
-        name: title
-        required: true
-        type: string
-      - description: Short description (max 2000 characters)
-        in: formData
-        name: description
-        type: string
-      - description: PDF file
-        in: formData
-        name: file
-        required: true
-        type: file
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Note uploaded
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.JSONResponse'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.CourseNote'
-              type: object
-        "400":
-          description: Invalid form, file is not a PDF, or too large
-          schema:
-            $ref: '#/definitions/utils.JSONResponse'
-        "401":
-          description: Not logged in
-          schema:
-            $ref: '#/definitions/utils.JSONResponse'
-        "403":
-          description: Not the instructor of this course
-          schema:
-            $ref: '#/definitions/utils.JSONResponse'
-        "404":
-          description: Course not found
-          schema:
-            $ref: '#/definitions/utils.JSONResponse'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/utils.JSONResponse'
-      summary: Upload a course note
       tags:
       - notes
   /courses/{id}/status:
@@ -744,6 +827,67 @@ paths:
       summary: List exams
       tags:
       - exams
+  /lessons/{id}/notes:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Instructor uploads a PDF note to a lesson of a course they teach.
+        Max 25 MB.
+      parameters:
+      - description: Lesson ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Note title (max 200 characters)
+        in: formData
+        name: title
+        required: true
+        type: string
+      - description: Short description (max 2000 characters)
+        in: formData
+        name: description
+        type: string
+      - description: PDF file
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Note uploaded
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Note'
+              type: object
+        "400":
+          description: Invalid form, file is not a PDF, or too large
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Lesson not found, or not in a course this user teaches
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Share a PDF note on a lesson
+      tags:
+      - notes
   /notes/{id}:
     delete:
       description: Instructor deletes a note they uploaded. The PDF is removed too.
