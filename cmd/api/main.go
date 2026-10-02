@@ -54,15 +54,25 @@ func main() {
 
 	// repositories
 	userRepo := models.NewUserRepository(db)
+	postRepo := models.NewPostRepository(db)
+	courseRepo := models.NewCourseRepository(db)
+	enrollmentRepo := models.NewEnrollmentRepository(db)
 
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
 
+	postService := service.NewPostService(postRepo)
+	courseService := service.NewCourseService(courseRepo)
+	enrollmentService := service.NewEnrollmentService(enrollmentRepo)
+
 	// middlewares
-	_ = middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
+	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
 
 	// handlerFunctions
 	authHandler := handlers.NewAuthHandler(userRepo, authService)
+	postHandler := handlers.NewPostHandler(postService)
+	courseHandler := handlers.NewCourseHandler(courseService)
+	enrollmentHandler := handlers.NewEnrollmentHandler(enrollmentService)
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
@@ -72,6 +82,21 @@ func main() {
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.RegisterHandler)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.LoginHandler)
 	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.RefreshTokenHandler)
+
+	// post routes (login required)
+	mux.Handle("POST /api/v1/posts", authMiddleware.RequireAuth(http.HandlerFunc(postHandler.CreatePost)))
+	mux.Handle("GET /api/v1/posts", authMiddleware.RequireAuth(http.HandlerFunc(postHandler.ListFeed)))
+	mux.Handle("DELETE /api/v1/posts/{id}", authMiddleware.RequireAuth(http.HandlerFunc(postHandler.DeletePost)))
+
+	// course routes (admin only, checked in the service)
+	mux.Handle("POST /api/v1/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.CreateCourse)))
+	mux.Handle("GET /api/v1/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.ListCourses)))
+	mux.Handle("PATCH /api/v1/courses/{id}/status", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.UpdateCourseStatus))) // instructor only
+
+	// enrollment routes (admin only, checked in the service)
+	mux.Handle("POST /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.CreateEnrollment)))
+	mux.Handle("GET /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.ListEnrollments)))
+	mux.Handle("PATCH /api/v1/enrollments/{id}", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.UpdateEnrollmentStatus)))
 
 	srv := http.Server{
 		Addr:         ":" + cfg.Port,

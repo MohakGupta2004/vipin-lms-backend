@@ -63,18 +63,7 @@ func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJSONResponse(w, http.StatusConflict, err.Error())
 		return
 	}
-	cookie := &http.Cookie{
-		Name:     "access_token",
-		Value:    token,
-		HttpOnly: true,
-	}
-	refreshCookie := &http.Cookie{
-		Name:     "refresh_token",
-		Value:    refresh,
-		HttpOnly: true,
-	}
-	http.SetCookie(w, refreshCookie)
-	http.SetCookie(w, cookie)
+	setAuthCookies(w, token, refresh)
 	utils.WriteJSONResponse(w, http.StatusCreated, user)
 }
 
@@ -108,18 +97,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	cookie := &http.Cookie{
-		Name:     "access_token",
-		Value:    token,
-		HttpOnly: true,
-	}
-	refreshCookie := &http.Cookie{
-		Name:     "refresh_token",
-		Value:    refresh,
-		HttpOnly: true,
-	}
-	http.SetCookie(w, refreshCookie)
-	http.SetCookie(w, cookie)
+	setAuthCookies(w, token, refresh)
 	utils.WriteJSONResponse(w, http.StatusOK, user)
 }
 
@@ -167,17 +145,25 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 		utils.WriteJSONResponse(w, http.StatusInternalServerError, "failed to generate new tokens")
 		return
 	}
-	refreshTokenCookie := &http.Cookie{
-		Name:     "refresh_token",
-		Value:    newRefreshToken,
-		HttpOnly: true,
-	}
-	accessTokenCookie := &http.Cookie{
-		Name:     "access_token",
-		Value:    newAccessToken,
-		HttpOnly: true,
-	}
-	http.SetCookie(w, refreshTokenCookie)
-	http.SetCookie(w, accessTokenCookie)
+	setAuthCookies(w, newAccessToken, newRefreshToken)
 	utils.WriteJSONResponse(w, http.StatusAccepted, "access token updated successfully")
+}
+
+// setAuthCookies stores both tokens as HttpOnly cookies.
+// Path "/" makes the browser send them to every API route, not only /auth.
+func setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "access_token",
+		Value:    accessToken,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    refreshToken,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }

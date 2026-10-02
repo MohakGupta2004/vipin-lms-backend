@@ -1,0 +1,12 @@
+DROP INDEX IF EXISTS posts_course_id_created_at_idx;
+
+ALTER TABLE post_links
+    ALTER COLUMN post_id DROP NOT NULL,
+    ALTER COLUMN link DROP NOT NULL;
+
+ALTER TABLE posts
+    ALTER COLUMN post DROP NOT NULL,
+    ALTER COLUMN user_id DROP NOT NULL,
+    ALTER COLUMN course_id DROP NOT NULL;
+
+ALTER TABLE courses DROP COLUMN IF EXISTS is_free;
