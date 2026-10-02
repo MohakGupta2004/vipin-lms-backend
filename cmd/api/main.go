@@ -56,6 +56,7 @@ func main() {
 	userRepo := models.NewUserRepository(db)
 	postRepo := models.NewPostRepository(db)
 	courseRepo := models.NewCourseRepository(db)
+	examRepo := models.NewExamRepository(db)
 	enrollmentRepo := models.NewEnrollmentRepository(db)
 
 	// services
@@ -72,6 +73,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(userRepo, authService)
 	postHandler := handlers.NewPostHandler(postService)
 	courseHandler := handlers.NewCourseHandler(courseService)
+	examHandler := handlers.NewExamHandler(examRepo)
 	enrollmentHandler := handlers.NewEnrollmentHandler(enrollmentService)
 
 	// handlers
@@ -92,6 +94,9 @@ func main() {
 	mux.Handle("POST /api/v1/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.CreateCourse)))
 	mux.Handle("GET /api/v1/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.ListCourses)))
 	mux.Handle("PATCH /api/v1/courses/{id}/status", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.UpdateCourseStatus))) // instructor only
+
+	// exam routes (any logged-in user)
+	mux.Handle("GET /api/v1/exams", authMiddleware.RequireAuth(http.HandlerFunc(examHandler.ListExams)))
 
 	// enrollment routes (admin only, checked in the service)
 	mux.Handle("POST /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.CreateEnrollment)))

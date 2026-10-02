@@ -112,6 +112,17 @@ definitions:
       userId:
         type: string
     type: object
+  models.Exam:
+    properties:
+      code:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   models.Post:
     properties:
       authorId:
@@ -569,6 +580,35 @@ paths:
       summary: Change enrollment status
       tags:
       - enrollments
+  /exams:
+    get:
+      description: Returns all active exams, sorted by code. Any logged-in user can
+        call this.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Exams
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.Exam'
+                  type: array
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List exams
+      tags:
+      - exams
   /posts:
     get:
       description: Returns posts from free courses, courses the user is enrolled in,
