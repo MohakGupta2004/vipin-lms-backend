@@ -45,12 +45,14 @@ func NewSigner(domain, keyName, base64Key string) (*Signer, error) {
 }
 
 // SignPrefix returns query parameters valid for every URL under domain+prefix until expires.
+// Values are base64url without "=" padding: Cloud CDN accepts it, and some players percent-encode
+// a trailing "=" as "%3D", which Cloud CDN then rejects with 403.
 func (s *Signer) SignPrefix(prefix string, expires time.Time) string {
 	policy := fmt.Sprintf("URLPrefix=%s&Expires=%d&KeyName=%s",
-		base64.URLEncoding.EncodeToString([]byte(s.domain+prefix)), expires.Unix(), s.keyName)
+		base64.RawURLEncoding.EncodeToString([]byte(s.domain+prefix)), expires.Unix(), s.keyName)
 	mac := hmac.New(sha1.New, s.key)
 	mac.Write([]byte(policy))
-	return policy + "&Signature=" + base64.URLEncoding.EncodeToString(mac.Sum(nil))
+	return policy + "&Signature=" + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // Verify checks query parameters made by SignPrefix and returns the signed path prefix
@@ -64,7 +66,7 @@ func (s *Signer) Verify(q url.Values, now time.Time) (prefix, query string, err 
 	if err != nil || now.Unix() >= expires {
 		return "", "", ErrBadSignature
 	}
-	gotSig, err := base64.URLEncoding.DecodeString(q.Get("Signature"))
+	gotSig, err := decodeBase64URL(q.Get("Signature"))
 	if err != nil {
 		return "", "", ErrBadSignature
 	}
@@ -74,11 +76,17 @@ func (s *Signer) Verify(q url.Values, now time.Time) (prefix, query string, err 
 	if !hmac.Equal(gotSig, mac.Sum(nil)) {
 		return "", "", ErrBadSignature
 	}
-	full, err := base64.URLEncoding.DecodeString(encodedPrefix)
+	full, err := decodeBase64URL(encodedPrefix)
 	if err != nil || !strings.HasPrefix(string(full), s.domain+"/") {
 		return "", "", ErrBadSignature
 	}
 	return strings.TrimPrefix(string(full), s.domain), policy + "&Signature=" + q.Get("Signature"), nil
+}
+
+// decodeBase64URL decodes base64url with or without "=" padding, so links signed before padding
+// was dropped still verify.
+func decodeBase64URL(v string) ([]byte, error) {
+	return base64.RawURLEncoding.DecodeString(strings.TrimRight(v, "="))
 }
 
 // URL returns the unsigned CDN URL of an object path.

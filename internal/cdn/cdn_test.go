@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,11 +25,11 @@ func TestSignPrefix(t *testing.T) {
 			exp := time.Unix(1700000000, 0)
 			got := s.SignPrefix("/courses/c/videos/v/hls/", exp)
 
-			policy := "URLPrefix=" + base64.URLEncoding.EncodeToString([]byte("http://1.2.3.4/courses/c/videos/v/hls/")) +
+			policy := "URLPrefix=" + base64.RawURLEncoding.EncodeToString([]byte("http://1.2.3.4/courses/c/videos/v/hls/")) +
 				"&Expires=1700000000&KeyName=key1"
 			mac := hmac.New(sha1.New, raw)
 			mac.Write([]byte(policy))
-			want := policy + "&Signature=" + base64.URLEncoding.EncodeToString(mac.Sum(nil))
+			want := policy + "&Signature=" + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 			if got != want {
 				t.Fatalf("got %q\nwant %q", got, want)
 			}
@@ -86,5 +87,20 @@ func TestVerify(t *testing.T) {
 
 	if _, _, err := s.Verify(url.Values{}, now); !errors.Is(err, ErrBadSignature) {
 		t.Errorf("empty: want ErrBadSignature, got %v", err)
+	}
+
+	// Only the four "key=" separators; no "=" padding that players might percent-encode.
+	if strings.Count(signed, "=") != 4 {
+		t.Errorf("signed query has base64 padding: %q", signed)
+	}
+
+	// Links signed with padding (before it was dropped) still verify.
+	policy := "URLPrefix=" + base64.URLEncoding.EncodeToString([]byte("http://1.2.3.4/courses/c/videos/v/hls/x")) +
+		"&Expires=1700000060&KeyName=key1"
+	mac := hmac.New(sha1.New, []byte("0123456789abcdef"))
+	mac.Write([]byte(policy))
+	padded, _ := url.ParseQuery(policy + "&Signature=" + base64.URLEncoding.EncodeToString(mac.Sum(nil)))
+	if prefix, _, err := s.Verify(padded, now); err != nil || prefix != "/courses/c/videos/v/hls/x" {
+		t.Errorf("padded: got (%q, %v)", prefix, err)
 	}
 }
