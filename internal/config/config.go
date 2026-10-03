@@ -21,6 +21,8 @@ type EnvConfig struct {
 	CORSAllowedOrigins []string      `env:"CORS_ALLOWED_ORIGINS"`
 	GCSEnabled         bool          `env:"GCS_ENABLE"` // PDF uploads work only when true
 	GCSBucketName      string        `env:"GCS_BUCKET_NAME"`
+	GCPProjectID       string        `env:"GCP_PROJECT_ID"`      // project that runs the Transcoder API
+	TranscoderLocation string        `env:"TRANSCODER_LOCATION"` // Transcoder region, e.g. asia-south1
 }
 
 func MustLoad() EnvConfig {
@@ -59,6 +61,14 @@ func MustLoad() EnvConfig {
 	cfg.GCSBucketName = os.Getenv("GCS_BUCKET_NAME")
 	if cfg.GCSBucketName == "" {
 		cfg.GCSBucketName = "vipin-lms"
+	}
+	cfg.GCPProjectID = os.Getenv("GCP_PROJECT_ID")
+	cfg.TranscoderLocation = os.Getenv("TRANSCODER_LOCATION")
+	if cfg.GCSEnabled && cfg.GCPProjectID == "" {
+		log.Fatal("GCP_PROJECT_ID is not set but GCS_ENABLE is true")
+	}
+	if cfg.GCSEnabled && cfg.TranscoderLocation == "" {
+		log.Fatal("TRANSCODER_LOCATION is not set but GCS_ENABLE is true")
 	}
 	if cfg.DBUrl == "" {
 		log.Fatal("DATABASE_URL is not set in the environment variables")

@@ -4,6 +4,7 @@ go 1.26.6
 
 require (
 	cloud.google.com/go/storage v1.69.0
+	cloud.google.com/go/video v1.34.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0

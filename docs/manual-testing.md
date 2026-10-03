@@ -275,9 +275,41 @@ Quick checks that existing behaviour still works:
 - Admin: `GET /courses` (all courses), enrollment create, list and update.
 - `POST /auth/refresh` with a valid session → `202`.
 
+## 14. Video upload + transcoding (new)
+
+Requires `GCS_ENABLE=true`, `GCP_PROJECT_ID`, `TRANSCODER_LOCATION` (e.g. `asia-south1`, same region as the bucket).
+
+**One-time GCP setup**
+
+- Enable the Transcoder API.
+- API service account: `roles/transcoder.admin` plus object create/view on the bucket. Signing uses ADC (`GOOGLE_APPLICATION_CREDENTIALS` key, or `roles/iam.serviceAccountTokenCreator` on Cloud Run).
+- Transcoder service agent `service-<PROJECT_NUMBER>@gcp-sa-transcoder.iam.gserviceaccount.com`: `roles/storage.objectAdmin` on the bucket.
+- Bucket CORS: allow `PUT` from the frontend origin with headers `Content-Type`, `x-goog-content-length-range`.
+
+**Flow** (instructor token)
+
+1. `POST /lessons/{id}/videos` with `{"fileName":"lecture.mp4","isFree":false}` → `201` with `video`, `uploadUrl`, `method`, `headers`, `expiresAt`.
+2. Send the returned `headers` unchanged (`Content-Type` follows the extension: mp4 `video/mp4`, mov `video/quicktime`, mkv `video/x-matroska`, webm `video/webm`):
+   `curl -X PUT -H "Content-Type: video/mp4" -H "x-goog-content-length-range: 0,5368709120" --upload-file sample.mp4 "<uploadUrl>"`
+3. `POST /videos/{id}/confirm` → `202`, status `processing`.
+4. Poll `GET /videos/{id}` until `ready`. If it ends `failed`, fix the cause and `POST /videos/{id}/retry` → `202` (reuses the uploaded file; `409` if not failed).
+    Check `gs://<bucket>/courses/<courseId>/videos/<videoId>/hls/manifest.m3u8` exists.
+
+**Negative checks**
+
+- Student → `403`. Other instructor's lesson/video → `404`.
+- Confirm before PUT → `400` "video file not uploaded yet". Confirm twice → `409`.
+- `fileName` ending `.exe` → `400`.
+- PUT with wrong `Content-Type` → GCS `403`.
+- `GCS_ENABLE=false` → `503`.
+- Restart the server mid-transcode → video still reaches `ready` (same job is polled).
+
+Known limits: videos stuck in `uploading` are not cleaned up (add a bucket lifecycle rule); `duration_sec` stays NULL; student playback is not built yet.
+
 ## Migrations added
 
 | File | Change | Down |
 |------|--------|------|
 | `24_quizzes_soft_delete` | `quizzes.deleted_at` column | Drops it |
 | `25_courses_slug_unique_active` | Slug unique only among non-deleted courses | Restores `courses_slug_key`. Fails if a deleted course and a live course share a slug |
+| `26_videos_lessons_and_transcoding` | `videos.lesson_id`, `is_free`, `transcode_job` + index | Drops them |

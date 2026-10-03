@@ -191,6 +191,33 @@ definitions:
         description: draft or published
         type: string
     type: object
+  handlers.VideoResponse:
+    properties:
+      video:
+        $ref: '#/definitions/models.Video'
+    type: object
+  handlers.VideoUploadResponse:
+    properties:
+      expiresAt:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      method:
+        type: string
+      uploadUrl:
+        type: string
+      video:
+        $ref: '#/definitions/models.Video'
+    type: object
+  handlers.requestVideoUploadBody:
+    properties:
+      fileName:
+        type: string
+      isFree:
+        type: boolean
+    type: object
   models.AttemptAnswer:
     properties:
       correctOptionId:
@@ -444,6 +471,29 @@ definitions:
         type: string
       role:
         $ref: '#/definitions/models.Role'
+    type: object
+  models.Video:
+    properties:
+      courseId:
+        type: string
+      createdAt:
+        type: string
+      error:
+        type: string
+      id:
+        type: string
+      isFree:
+        type: boolean
+      lessonId:
+        type: string
+      sizeBytes:
+        type: integer
+      status:
+        type: string
+      title:
+        type: string
+      updatedAt:
+        type: string
     type: object
   utils.JSONResponse:
     properties:
@@ -1481,6 +1531,64 @@ paths:
       summary: Create a quiz on a lesson
       tags:
       - quizzes
+  /lessons/{id}/videos:
+    post:
+      consumes:
+      - application/json
+      description: Course owner (instructor or admin) gets a signed URL to PUT a video
+        file (mp4, mov, mkv or webm, max 5 GB) straight to storage. Send the returned
+        headers unchanged with the PUT, then call POST /videos/{id}/confirm.
+      parameters:
+      - description: Lesson ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: File name and whether the video is free to watch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.requestVideoUploadBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Upload started
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.VideoUploadResponse'
+              type: object
+        "400":
+          description: Invalid body or unsupported file name
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Lesson not found, or not in a course this user teaches
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: File storage is disabled (GCS_ENABLE is not true)
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Start a video upload on a lesson
+      tags:
+      - videos
   /me/courses:
     get:
       description: Instructors and admins get the courses they own, drafts included.
@@ -2067,4 +2175,153 @@ paths:
       summary: List users
       tags:
       - users
+  /videos/{id}:
+    get:
+      description: The uploader (who must still own the course) polls this until status
+        is ready or failed.
+      parameters:
+      - description: Video ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Video
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.VideoResponse'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Video not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Get a video's upload and transcoding status
+      tags:
+      - videos
+  /videos/{id}/confirm:
+    post:
+      description: Call after the file was PUT to the signed URL. Checks the file
+        and starts transcoding in the background; poll GET /videos/{id} until status
+        is ready.
+      parameters:
+      - description: Video ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Transcoding queued
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.VideoResponse'
+              type: object
+        "400":
+          description: File not uploaded yet, empty, or wrong type
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Video not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "409":
+          description: Video is not awaiting upload
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: Storage disabled, or transcoding queue busy (retry)
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Confirm a video upload
+      tags:
+      - videos
+  /videos/{id}/retry:
+    post:
+      description: Starts a new transcoding job for a video whose status is failed.
+        The uploaded file is reused. Poll GET /videos/{id} until status is ready or
+        failed.
+      parameters:
+      - description: Video ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Transcoding queued again
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.VideoResponse'
+              type: object
+        "400":
+          description: Source file is missing
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Video not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "409":
+          description: Video is not failed
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: Storage disabled, or transcoding queue busy (retry)
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Retry transcoding of a failed video
+      tags:
+      - videos
 swagger: "2.0"

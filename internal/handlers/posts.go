@@ -151,11 +151,14 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrLessonNotFound),
 		errors.Is(err, service.ErrCourseNotFound),
 		errors.Is(err, service.ErrQuizNotFound),
+		errors.Is(err, service.ErrVideoNotFound),
 		errors.Is(err, service.ErrEnrollmentNotFound):
 		utils.WriteJSONResponse(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled), errors.Is(err, service.ErrQuizHasAttempts):
+	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled), errors.Is(err, service.ErrQuizHasAttempts),
+		errors.Is(err, service.ErrVideoNotAwaitingUpload),
+		errors.Is(err, service.ErrVideoNotFailed):
 		utils.WriteJSONResponse(w, http.StatusConflict, err.Error())
-	case errors.Is(err, service.ErrStorageDisabled):
+	case errors.Is(err, service.ErrStorageDisabled), errors.Is(err, service.ErrTranscodeQueueBusy):
 		utils.WriteJSONResponse(w, http.StatusServiceUnavailable, err.Error())
 	default:
 		slog.Error("request failed", "err", err)
