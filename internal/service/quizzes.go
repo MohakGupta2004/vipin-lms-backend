@@ -24,8 +24,12 @@ const (
 	defaultPassPercent       = 70
 )
 
-// ErrQuizNotFound means the quiz does not exist, or the user may not see it.
-var ErrQuizNotFound = errors.New("quiz not found")
+var (
+	// ErrQuizNotFound means the quiz does not exist, or the user may not see it.
+	ErrQuizNotFound = errors.New("quiz not found")
+	// ErrQuizHasAttempts means the questions cannot be replaced because students already answered them.
+	ErrQuizHasAttempts = models.ErrQuizHasAttempts
+)
 
 // CreateQuizInput is everything an instructor sends to create a quiz in one go.
 type CreateQuizInput struct {
@@ -36,6 +40,18 @@ type CreateQuizInput struct {
 	IsFree       bool
 	Status       string // "" = published
 	Questions    []CreateQuestionInput
+}
+
+// UpdateQuizInput holds the quiz fields to change. Nil fields are left as they are.
+// TimeLimitSec 0 makes the quiz untimed. Questions, when set, replace all existing questions.
+type UpdateQuizInput struct {
+	Title        *string
+	Description  *string
+	TimeLimitSec *int
+	PassPercent  *int
+	IsFree       *bool
+	Status       *string
+	Questions    *[]CreateQuestionInput
 }
 
 type CreateQuestionInput struct {
@@ -67,10 +83,10 @@ func NewQuizService(quizRepo *models.QuizRepository, lessonRepo *models.LessonRe
 	}
 }
 
-// CreateQuiz lets an instructor create a quiz with its questions and options on a lesson of a course they teach.
-// Questions and options keep the order they were sent in.
+// CreateQuiz lets the course owner (instructor or admin) create a quiz with its questions and options on a
+// lesson of their course. Questions and options keep the order they were sent in.
 func (s *QuizService) CreateQuiz(ctx context.Context, user *models.User, lessonID string, in CreateQuizInput) (*models.Quiz, error) {
-	if user.Role != models.RoleInstructor {
+	if !user.CanTeach() {
 		return nil, ErrForbidden
 	}
 	if !uuidPattern.MatchString(lessonID) {
@@ -122,27 +138,48 @@ func buildQuiz(in CreateQuizInput) (*models.Quiz, error) {
 	if quiz.Status == "" {
 		quiz.Status = "published"
 	}
+	if err := validateQuizDetails(quiz); err != nil {
+		return nil, err
+	}
 
+	questions, err := buildQuestions(in.Questions)
+	if err != nil {
+		return nil, err
+	}
+	quiz.Questions = questions
+	return quiz, nil
+}
+
+// validateQuizDetails checks the quiz's own fields, not its questions.
+func validateQuizDetails(quiz *models.Quiz) error {
 	switch {
 	case quiz.Title == "":
-		return nil, fmt.Errorf("%w: title is required", ErrInvalidInput)
+		return fmt.Errorf("%w: title is required", ErrInvalidInput)
 	case utf8.RuneCountInString(quiz.Title) > maxQuizTitleLength:
-		return nil, fmt.Errorf("%w: title must be at most %d characters", ErrInvalidInput, maxQuizTitleLength)
+		return fmt.Errorf("%w: title must be at most %d characters", ErrInvalidInput, maxQuizTitleLength)
 	case utf8.RuneCountInString(quiz.Description) > maxQuizDescriptionLength:
-		return nil, fmt.Errorf("%w: description must be at most %d characters", ErrInvalidInput, maxQuizDescriptionLength)
+		return fmt.Errorf("%w: description must be at most %d characters", ErrInvalidInput, maxQuizDescriptionLength)
 	case quiz.TimeLimitSec != nil && (*quiz.TimeLimitSec < 1 || *quiz.TimeLimitSec > maxTimeLimitSec):
-		return nil, fmt.Errorf("%w: timeLimitSec must be between 1 and %d", ErrInvalidInput, maxTimeLimitSec)
+		return fmt.Errorf("%w: timeLimitSec must be between 1 and %d", ErrInvalidInput, maxTimeLimitSec)
 	case quiz.PassPercent < 0 || quiz.PassPercent > 100:
-		return nil, fmt.Errorf("%w: passPercent must be between 0 and 100", ErrInvalidInput)
+		return fmt.Errorf("%w: passPercent must be between 0 and 100", ErrInvalidInput)
 	case quiz.Status != "draft" && quiz.Status != "published":
-		return nil, fmt.Errorf("%w: status must be draft or published", ErrInvalidInput)
-	case len(in.Questions) == 0:
+		return fmt.Errorf("%w: status must be draft or published", ErrInvalidInput)
+	}
+	return nil
+}
+
+// buildQuestions validates questions with their options and numbers them in the order they were sent.
+func buildQuestions(in []CreateQuestionInput) ([]models.Question, error) {
+	switch {
+	case len(in) == 0:
 		return nil, fmt.Errorf("%w: at least one question is required", ErrInvalidInput)
-	case len(in.Questions) > maxQuestionsPerQuiz:
+	case len(in) > maxQuestionsPerQuiz:
 		return nil, fmt.Errorf("%w: a quiz can have at most %d questions", ErrInvalidInput, maxQuestionsPerQuiz)
 	}
 
-	for i, qin := range in.Questions {
+	questions := make([]models.Question, 0, len(in))
+	for i, qin := range in {
 		n := i + 1
 		question := models.Question{
 			QuestionText: strings.TrimSpace(qin.QuestionText),
@@ -183,14 +220,14 @@ func buildQuiz(in CreateQuizInput) (*models.Quiz, error) {
 		if correct != 1 {
 			return nil, fmt.Errorf("%w: question %d: exactly one option must be correct", ErrInvalidInput, n)
 		}
-		quiz.Questions = append(quiz.Questions, question)
+		questions = append(questions, question)
 	}
-	return quiz, nil
+	return questions, nil
 }
 
-// UpdateQuizStatus lets the instructor of the course publish a quiz or move it back to draft.
+// UpdateQuizStatus lets the course owner (instructor or admin) publish a quiz or move it back to draft.
 func (s *QuizService) UpdateQuizStatus(ctx context.Context, user *models.User, quizID, status string) (*models.Quiz, error) {
-	if user.Role != models.RoleInstructor {
+	if !user.CanTeach() {
 		return nil, ErrForbidden
 	}
 	status = strings.TrimSpace(status)
@@ -215,6 +252,96 @@ func (s *QuizService) UpdateQuizStatus(ctx context.Context, user *models.User, q
 		return nil, err
 	}
 	quiz.Status = status
+	return quiz, nil
+}
+
+// UpdateQuiz lets the course owner (instructor or admin) edit a quiz's details and, while nobody has
+// attempted it yet, replace its questions.
+func (s *QuizService) UpdateQuiz(ctx context.Context, user *models.User, quizID string, in UpdateQuizInput) (*models.Quiz, error) {
+	if !user.CanTeach() {
+		return nil, ErrForbidden
+	}
+	quiz, err := s.ownedQuiz(ctx, user, quizID)
+	if err != nil {
+		return nil, err
+	}
+
+	if in.Title != nil {
+		quiz.Title = strings.TrimSpace(*in.Title)
+	}
+	if in.Description != nil {
+		quiz.Description = strings.TrimSpace(*in.Description)
+	}
+	if in.TimeLimitSec != nil {
+		quiz.TimeLimitSec = in.TimeLimitSec
+		if *in.TimeLimitSec == 0 {
+			quiz.TimeLimitSec = nil
+		}
+	}
+	if in.PassPercent != nil {
+		quiz.PassPercent = *in.PassPercent
+	}
+	if in.IsFree != nil {
+		quiz.IsFree = *in.IsFree
+	}
+	if in.Status != nil {
+		quiz.Status = strings.TrimSpace(*in.Status)
+	}
+	if err := validateQuizDetails(quiz); err != nil {
+		return nil, err
+	}
+
+	replaceQuestions := in.Questions != nil
+	if replaceQuestions {
+		quiz.Questions, err = buildQuestions(*in.Questions)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	err = s.quizRepo.UpdateQuiz(ctx, quiz, replaceQuestions)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrQuizNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Return the quiz as GetQuiz shows it to the owner, with every question.
+	quiz.Questions, err = s.quizRepo.ListQuestions(ctx, quiz.ID)
+	if err != nil {
+		return nil, err
+	}
+	quiz.QuestionCount = len(quiz.Questions)
+	return quiz, nil
+}
+
+// DeleteQuiz lets the course owner (instructor or admin) delete a quiz. It is hidden, not erased,
+// so students' attempts and scores are kept.
+func (s *QuizService) DeleteQuiz(ctx context.Context, user *models.User, quizID string) error {
+	if !user.CanTeach() {
+		return ErrForbidden
+	}
+	quiz, err := s.ownedQuiz(ctx, user, quizID)
+	if err != nil {
+		return err
+	}
+	err = s.quizRepo.SoftDelete(ctx, quiz.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrQuizNotFound
+	}
+	return err
+}
+
+// ownedQuiz loads a quiz of a course the user owns. Anything else looks like a missing quiz.
+func (s *QuizService) ownedQuiz(ctx context.Context, user *models.User, quizID string) (*models.Quiz, error) {
+	quiz, isTeacher, err := s.authorizeQuiz(ctx, user, quizID)
+	if err != nil {
+		return nil, err
+	}
+	if !isTeacher {
+		return nil, ErrQuizNotFound
+	}
 	return quiz, nil
 }
 

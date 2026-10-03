@@ -24,7 +24,7 @@ var (
 	ErrInvalidInput = errors.New("invalid input")
 	// ErrForbidden means the user is logged in but not allowed to do this.
 	ErrForbidden = errors.New("you are not allowed to do this")
-	// ErrPostNotFound means the post does not exist or does not belong to the user.
+	// ErrPostNotFound means the post does not exist or is not in a course the user owns.
 	ErrPostNotFound = errors.New("post not found")
 
 	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -40,9 +40,9 @@ func NewPostService(postRepo *models.PostRepository) *PostService {
 	}
 }
 
-// CreatePost lets an instructor post to one of their own courses.
+// CreatePost lets the owner of a course (instructor or admin) post to it.
 func (s *PostService) CreatePost(ctx context.Context, user *models.User, courseID, content string, links []string) (*models.Post, error) {
-	if user.Role != models.RoleInstructor {
+	if !user.CanTeach() {
 		return nil, ErrForbidden
 	}
 
@@ -62,7 +62,7 @@ func (s *PostService) CreatePost(ctx context.Context, user *models.User, courseI
 		return nil, err
 	}
 
-	// The instructor may only post to a course they teach.
+	// Only the course's instructor_id may post to it.
 	courseTitle, err := s.postRepo.GetCourseTitleForInstructor(ctx, courseID, user.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrForbidden
@@ -85,9 +85,9 @@ func (s *PostService) ListFeed(ctx context.Context, user *models.User, limit, of
 	return s.postRepo.ListFeed(ctx, user.ID, limit, offset)
 }
 
-// DeletePost lets an instructor delete a post they wrote.
+// DeletePost lets the owner of a course (instructor or admin) delete any post in it.
 func (s *PostService) DeletePost(ctx context.Context, user *models.User, postID string) error {
-	if user.Role != models.RoleInstructor {
+	if !user.CanTeach() {
 		return ErrForbidden
 	}
 	if !uuidPattern.MatchString(postID) {

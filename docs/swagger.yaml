@@ -7,6 +7,7 @@ definitions:
       examId:
         type: string
       instructorId:
+        description: 'optional: defaults to the admin creating the course'
         type: string
       isFree:
         type: boolean
@@ -127,6 +128,21 @@ definitions:
           $ref: '#/definitions/handlers.SubmitAnswerRequest'
         type: array
     type: object
+  handlers.UpdateCourseRequest:
+    properties:
+      description:
+        type: string
+      examId:
+        type: string
+      isFree:
+        type: boolean
+      shortDescription:
+        type: string
+      slug:
+        type: string
+      title:
+        type: string
+    type: object
   handlers.UpdateCourseStatusRequest:
     properties:
       status:
@@ -137,6 +153,36 @@ definitions:
     properties:
       status:
         description: active, completed, expired or cancelled
+        type: string
+    type: object
+  handlers.UpdateLessonRequest:
+    properties:
+      content:
+        type: string
+      isFree:
+        type: boolean
+      isPublished:
+        type: boolean
+      title:
+        type: string
+    type: object
+  handlers.UpdateQuizRequest:
+    properties:
+      description:
+        type: string
+      isFree:
+        type: boolean
+      passPercent:
+        type: integer
+      questions:
+        items:
+          $ref: '#/definitions/handlers.CreateQuestionRequest'
+        type: array
+      status:
+        type: string
+      timeLimitSec:
+        type: integer
+      title:
         type: string
     type: object
   handlers.UpdateQuizStatusRequest:
@@ -386,6 +432,19 @@ definitions:
       role:
         $ref: '#/definitions/models.Role'
     type: object
+  models.UserSummary:
+    properties:
+      email:
+        type: string
+      firstName:
+        type: string
+      id:
+        type: string
+      lastName:
+        type: string
+      role:
+        $ref: '#/definitions/models.Role'
+    type: object
   utils.JSONResponse:
     properties:
       data: {}
@@ -434,6 +493,49 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Log in
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      description: |-
+        Clears the access_token and refresh_token cookies. Works without a valid session.
+        Tokens are stateless JWTs, so a copied token stays valid until it expires.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Logged out
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+      summary: Log out
+      tags:
+      - auth
+  /auth/me:
+    get:
+      description: Returns the user the access_token cookie belongs to, with their
+        current role read from the database.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Logged-in user
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.User'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Get the logged-in user
       tags:
       - auth
   /auth/refresh:
@@ -548,8 +650,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Admin only. Creates a course for an instructor. Status defaults
-        to draft.
+      description: Admin only. Creates a course. instructorId is optional and defaults
+        to the admin, who then owns and manages the course; it may also name an active
+        instructor or admin. Status defaults to draft.
       parameters:
       - description: Course details
         in: body
@@ -590,6 +693,140 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Create a course
+      tags:
+      - courses
+  /courses/{id}:
+    delete:
+      description: 'Course owner only. Soft delete: the course disappears from every
+        list and students lose access. Enrollments are kept unchanged.'
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Course deleted
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor or admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course not found, or not owned by this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Delete a course
+      tags:
+      - courses
+    get:
+      description: Admins can read any course and owners their own (drafts included).
+        A student can read a published course they have a valid enrollment in. Everyone
+        else gets 404.
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Course
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Course'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Get a course
+      tags:
+      - courses
+    patch:
+      consumes:
+      - application/json
+      description: Course owner only. Changes only the fields that are sent. Status
+        has its own endpoint.
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateCourseRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Course updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Course'
+              type: object
+        "400":
+          description: Malformed payload or invalid fields
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor or admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course not found, or not owned by this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "409":
+          description: Slug already used
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Edit a course
       tags:
       - courses
   /courses/{id}/lessons:
@@ -639,8 +876,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Instructor adds a lesson to a course they teach. A lesson is a
-        chapter: add as many PDF notes to it as needed with POST /lessons/{id}/notes.
+      description: 'Course owner (instructor or admin) adds a lesson to their course.
+        A lesson is a chapter: add as many PDF notes to it as needed with POST /lessons/{id}/notes.
         It goes at the end of the course and is published by default.'
       parameters:
       - description: Course ID
@@ -753,8 +990,8 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Instructor only. Changes the status of a course the instructor
-        teaches.
+      description: 'Course owner only: the instructor or admin whose id is the course''s
+        instructorId.'
       parameters:
       - description: Course ID
         in: path
@@ -788,11 +1025,11 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
         "403":
-          description: Not an instructor
+          description: Not an instructor or admin
           schema:
             $ref: '#/definitions/utils.JSONResponse'
         "404":
-          description: Course not found
+          description: Course not found, or not owned by this user
           schema:
             $ref: '#/definitions/utils.JSONResponse'
         "500":
@@ -983,12 +1220,110 @@ paths:
       summary: List exams
       tags:
       - exams
+  /lessons/{id}:
+    delete:
+      description: Course owner (instructor or admin) deletes a lesson. Its notes
+        and their PDF files are removed. Its quizzes are hidden, but students' past
+        attempts are kept.
+      parameters:
+      - description: Lesson ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Lesson deleted
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor or admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Lesson not found, or not in a course this user owns
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: Lesson has PDF notes and PDF storage is disabled
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Delete a lesson
+      tags:
+      - lessons
+    patch:
+      consumes:
+      - application/json
+      description: Course owner (instructor or admin) changes only the fields that
+        are sent. Send isPublished to publish or unpublish the lesson at any time.
+      parameters:
+      - description: Lesson ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateLessonRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Lesson updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Lesson'
+              type: object
+        "400":
+          description: Malformed payload or invalid fields
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor or admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Lesson not found, or not in a course this user owns
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Edit a lesson
+      tags:
+      - lessons
   /lessons/{id}/notes:
     post:
       consumes:
       - multipart/form-data
-      description: Instructor uploads a PDF note to a lesson of a course they teach.
-        Max 25 MB.
+      description: Course owner (instructor or admin) uploads a PDF note to a lesson
+        of their course. Max 25 MB.
       parameters:
       - description: Lesson ID
         in: path
@@ -1095,10 +1430,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Instructor creates a quiz with all its questions and options in
-        one request, on a lesson of a course they teach. Each question needs 2 to
-        10 options with exactly one correct. Questions and options keep the order
-        they are sent in. Published by default.
+      description: Course owner (instructor or admin) creates a quiz with all its
+        questions and options in one request, on a lesson of their course. Each question
+        needs 2 to 10 options with exactly one correct. Questions and options keep
+        the order they are sent in. Published by default.
       parameters:
       - description: Lesson ID
         in: path
@@ -1146,9 +1481,53 @@ paths:
       summary: Create a quiz on a lesson
       tags:
       - quizzes
+  /me/courses:
+    get:
+      description: Instructors and admins get the courses they own, drafts included.
+        Students get the published courses they have a valid enrollment in. Newest
+        first.
+      parameters:
+      - description: Max courses to return (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Number of courses to skip (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Courses
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.Course'
+                  type: array
+              type: object
+        "400":
+          description: Invalid limit or offset
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List my courses
+      tags:
+      - courses
   /notes/{id}:
     delete:
-      description: Instructor deletes a note they uploaded. The PDF is removed too.
+      description: Course owner (instructor or admin) deletes a note of their course.
+        The PDF is removed too.
       parameters:
       - description: Note ID
         in: path
@@ -1271,8 +1650,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Instructor creates a post (with optional links) for one of their
-        own courses.
+      description: Course owner (instructor or admin) creates a post (with optional
+        links) for one of their own courses.
       parameters:
       - description: Post details
         in: body
@@ -1313,7 +1692,8 @@ paths:
       - posts
   /posts/{id}:
     delete:
-      description: Instructor deletes a post they created. Its links are deleted too.
+      description: Course owner (instructor or admin) deletes any post in their course.
+        Its links are deleted too.
       parameters:
       - description: Post ID
         in: path
@@ -1352,6 +1732,46 @@ paths:
       tags:
       - posts
   /quizzes/{id}:
+    delete:
+      description: Course owner (instructor or admin) deletes a quiz. It disappears
+        for everyone, but students' past attempts and scores are kept in the database.
+      parameters:
+      - description: Quiz ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Quiz deleted
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor or admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Quiz not found, or not in a course this user owns
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Delete a quiz
+      tags:
+      - quizzes
     get:
       description: Returns the quiz with its questions and options in order. The instructor
         also gets isCorrect and explanations; students never do before submitting.
@@ -1386,6 +1806,64 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Get a quiz with its questions
+      tags:
+      - quizzes
+    patch:
+      consumes:
+      - application/json
+      description: Course owner (instructor or admin) changes only the fields that
+        are sent. timeLimitSec 0 makes the quiz untimed. Sending questions replaces
+        all of them, which is refused once any student has attempted the quiz. Returns
+        the quiz with its questions and answers.
+      parameters:
+      - description: Quiz ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateQuizRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Quiz updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Quiz'
+              type: object
+        "400":
+          description: Malformed payload or invalid fields
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor or admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Quiz not found, or not in a course this user owns
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "409":
+          description: 'Questions cannot change: the quiz already has attempts'
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Edit a quiz
       tags:
       - quizzes
   /quizzes/{id}/attempts:
@@ -1489,8 +1967,8 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Instructor of the course publishes a quiz or moves it back to draft.
-        Students only see published quizzes.
+      description: Course owner (instructor or admin) publishes a quiz or moves it
+        back to draft. Students only see published quizzes.
       parameters:
       - description: Quiz ID
         in: path
@@ -1538,4 +2016,55 @@ paths:
       summary: Change quiz status
       tags:
       - quizzes
+  /users:
+    get:
+      description: Admin only. Returns active users sorted by name, for the instructor
+        picker (role=instructor) and the student picker (role=student). Never includes
+        password data.
+      parameters:
+      - description: 'student, instructor or admin (default: all)'
+        in: query
+        name: role
+        type: string
+      - description: Max users to return (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      - description: Number of users to skip (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Users
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.UserSummary'
+                  type: array
+              type: object
+        "400":
+          description: Invalid role, limit or offset
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List users
+      tags:
+      - users
 swagger: "2.0"

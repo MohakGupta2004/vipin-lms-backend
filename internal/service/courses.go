@@ -33,13 +33,23 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // CreateCourseInput is everything an admin sends to create a course.
 type CreateCourseInput struct {
 	ExamID           string
-	InstructorID     string
+	InstructorID     string // empty = the admin creating it
 	Title            string
 	Slug             string
 	ShortDescription string
 	Description      string
 	Status           string
 	IsFree           bool
+}
+
+// UpdateCourseInput holds the course fields to change. Nil fields are left as they are.
+type UpdateCourseInput struct {
+	ExamID           *string
+	Title            *string
+	Slug             *string
+	ShortDescription *string
+	Description      *string
+	IsFree           *bool
 }
 
 type CourseService struct {
@@ -52,7 +62,8 @@ func NewCourseService(courseRepo *models.CourseRepository) *CourseService {
 	}
 }
 
-// CreateCourse lets an admin create a course for an instructor.
+// CreateCourse lets an admin create a course. The admin owns it unless they name another
+// instructor (or admin) as its instructor.
 func (s *CourseService) CreateCourse(ctx context.Context, user *models.User, input CreateCourseInput) (*models.Course, error) {
 
 	if user.Role != models.RoleAdmin {
@@ -70,6 +81,9 @@ func (s *CourseService) CreateCourse(ctx context.Context, user *models.User, inp
 	}
 	if course.Status == "" {
 		course.Status = "draft"
+	}
+	if course.InstructorID == "" {
+		course.InstructorID = user.ID
 	}
 
 	if err := validateCourse(course); err != nil {
@@ -89,7 +103,7 @@ func (s *CourseService) CreateCourse(ctx context.Context, user *models.User, inp
 		return nil, err
 	}
 	if !instructorExists {
-		return nil, fmt.Errorf("%w: instructor not found", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: instructor not found (must be an active instructor or admin)", ErrInvalidInput)
 	}
 
 	err = s.courseRepo.CreateCourse(ctx, course)
@@ -108,6 +122,134 @@ func (s *CourseService) ListCourses(ctx context.Context, user *models.User, limi
 		return nil, ErrForbidden
 	}
 	return s.courseRepo.ListCourses(ctx, limit, offset)
+}
+
+// GetCourse returns one course. Admins see any course, the owner sees theirs, and a student with a
+// valid enrollment sees it once it is published. Everyone else gets ErrCourseNotFound.
+func (s *CourseService) GetCourse(ctx context.Context, user *models.User, courseID string) (*models.Course, error) {
+	if !uuidPattern.MatchString(courseID) {
+		return nil, ErrCourseNotFound
+	}
+	course, err := s.courseRepo.GetCourse(ctx, courseID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrCourseNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if user.Role == models.RoleAdmin || (user.CanTeach() && course.InstructorID == user.ID) {
+		return course, nil
+	}
+	if course.Status != "published" {
+		return nil, ErrCourseNotFound
+	}
+	enrolled, err := s.courseRepo.HasValidEnrollment(ctx, course.ID, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !enrolled {
+		return nil, ErrCourseNotFound
+	}
+	return course, nil
+}
+
+// ListMyCourses returns the courses an instructor or admin owns (drafts included), or the published
+// courses a student has a valid enrollment in.
+func (s *CourseService) ListMyCourses(ctx context.Context, user *models.User, limit, offset int) ([]models.Course, error) {
+	if user.CanTeach() {
+		return s.courseRepo.ListByInstructor(ctx, user.ID, limit, offset)
+	}
+	return s.courseRepo.ListEnrolled(ctx, user.ID, limit, offset)
+}
+
+// UpdateCourse lets the course owner (instructor or admin) edit its details.
+func (s *CourseService) UpdateCourse(ctx context.Context, user *models.User, courseID string, in UpdateCourseInput) (*models.Course, error) {
+	if !user.CanTeach() {
+		return nil, ErrForbidden
+	}
+	course, err := s.ownedCourse(ctx, user, courseID)
+	if err != nil {
+		return nil, err
+	}
+
+	if in.ExamID != nil {
+		course.ExamID = strings.TrimSpace(*in.ExamID)
+	}
+	if in.Title != nil {
+		course.Title = strings.TrimSpace(*in.Title)
+	}
+	if in.Slug != nil {
+		course.Slug = strings.TrimSpace(*in.Slug)
+	}
+	if in.ShortDescription != nil {
+		course.ShortDescription = strings.TrimSpace(*in.ShortDescription)
+	}
+	if in.Description != nil {
+		course.Description = strings.TrimSpace(*in.Description)
+	}
+	if in.IsFree != nil {
+		course.IsFree = *in.IsFree
+	}
+	if err := validateCourse(course); err != nil {
+		return nil, err
+	}
+
+	if in.ExamID != nil {
+		examExists, err := s.courseRepo.ExamExists(ctx, course.ExamID)
+		if err != nil {
+			return nil, err
+		}
+		if !examExists {
+			return nil, fmt.Errorf("%w: exam not found", ErrInvalidInput)
+		}
+	}
+
+	err = s.courseRepo.UpdateCourse(ctx, course, user.ID)
+	if isUniqueViolation(err) {
+		return nil, ErrSlugTaken
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrCourseNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return course, nil
+}
+
+// DeleteCourse lets the course owner (instructor or admin) soft-delete it. Enrollments are kept as
+// they are, but every content and feed query skips deleted courses, so students lose access.
+func (s *CourseService) DeleteCourse(ctx context.Context, user *models.User, courseID string) error {
+	if !user.CanTeach() {
+		return ErrForbidden
+	}
+	if !uuidPattern.MatchString(courseID) {
+		return ErrCourseNotFound
+	}
+	err := s.courseRepo.SoftDelete(ctx, courseID, user.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrCourseNotFound
+	}
+	return err
+}
+
+// ownedCourse loads a course the user owns. Anything else looks like a missing course.
+func (s *CourseService) ownedCourse(ctx context.Context, user *models.User, courseID string) (*models.Course, error) {
+	if !uuidPattern.MatchString(courseID) {
+		return nil, ErrCourseNotFound
+	}
+	course, err := s.courseRepo.GetCourse(ctx, courseID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrCourseNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if course.InstructorID != user.ID {
+		return nil, ErrCourseNotFound
+	}
+	return course, nil
 }
 
 func validateCourse(c *models.Course) error {
@@ -138,9 +280,9 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
-// UpdateCourseStatus lets an instructor change the status of a course they teach.
+// UpdateCourseStatus lets the course owner (instructor or admin) change its status.
 func (s *CourseService) UpdateCourseStatus(ctx context.Context, user *models.User, courseID, status string) (*models.Course, error) {
-	if user.Role != models.RoleInstructor {
+	if !user.CanTeach() {
 		return nil, ErrForbidden
 	}
 	if !uuidPattern.MatchString(courseID) {

@@ -35,6 +35,18 @@ type CreateOptionRequest struct {
 	IsCorrect  bool   `json:"isCorrect"`
 }
 
+// UpdateQuizRequest changes only the fields that are sent. timeLimitSec 0 makes the quiz untimed.
+// questions, when sent, replace all existing questions; refused with 409 once the quiz has attempts.
+type UpdateQuizRequest struct {
+	Title        *string                  `json:"title"`
+	Description  *string                  `json:"description"`
+	TimeLimitSec *int                     `json:"timeLimitSec"`
+	PassPercent  *int                     `json:"passPercent"`
+	IsFree       *bool                    `json:"isFree"`
+	Status       *string                  `json:"status"`
+	Questions    *[]CreateQuestionRequest `json:"questions"`
+}
+
 type UpdateQuizStatusRequest struct {
 	Status string `json:"status"` // draft or published
 }
@@ -61,7 +73,7 @@ func NewQuizHandler(quizService *service.QuizService) *QuizHandler {
 // CreateQuiz godoc
 //
 //	@Summary		Create a quiz on a lesson
-//	@Description	Instructor creates a quiz with all its questions and options in one request, on a lesson of a course they teach. Each question needs 2 to 10 options with exactly one correct. Questions and options keep the order they are sent in. Published by default.
+//	@Description	Course owner (instructor or admin) creates a quiz with all its questions and options in one request, on a lesson of their course. Each question needs 2 to 10 options with exactly one correct. Questions and options keep the order they are sent in. Published by default.
 //	@Tags			quizzes
 //	@Accept			json
 //	@Produce		json
@@ -95,19 +107,7 @@ func (h *QuizHandler) CreateQuiz(w http.ResponseWriter, r *http.Request) {
 		PassPercent:  req.PassPercent,
 		IsFree:       req.IsFree,
 		Status:       req.Status,
-	}
-	for _, q := range req.Questions {
-		question := service.CreateQuestionInput{
-			QuestionText: q.QuestionText,
-			Explanation:  q.Explanation,
-		}
-		for _, o := range q.Options {
-			question.Options = append(question.Options, service.CreateOptionInput{
-				OptionText: o.OptionText,
-				IsCorrect:  o.IsCorrect,
-			})
-		}
-		in.Questions = append(in.Questions, question)
+		Questions:    questionInputs(req.Questions),
 	}
 
 	quiz, err := h.quizService.CreateQuiz(r.Context(), user, r.PathValue("id"), in)
@@ -118,10 +118,108 @@ func (h *QuizHandler) CreateQuiz(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusCreated, quiz)
 }
 
+// questionInputs converts request questions into service input, keeping their order.
+func questionInputs(req []CreateQuestionRequest) []service.CreateQuestionInput {
+	questions := make([]service.CreateQuestionInput, 0, len(req))
+	for _, q := range req {
+		question := service.CreateQuestionInput{
+			QuestionText: q.QuestionText,
+			Explanation:  q.Explanation,
+		}
+		for _, o := range q.Options {
+			question.Options = append(question.Options, service.CreateOptionInput{
+				OptionText: o.OptionText,
+				IsCorrect:  o.IsCorrect,
+			})
+		}
+		questions = append(questions, question)
+	}
+	return questions
+}
+
+// UpdateQuiz godoc
+//
+//	@Summary		Edit a quiz
+//	@Description	Course owner (instructor or admin) changes only the fields that are sent. timeLimitSec 0 makes the quiz untimed. Sending questions replaces all of them, which is refused once any student has attempted the quiz. Returns the quiz with its questions and answers.
+//	@Tags			quizzes
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string									true	"Quiz ID"
+//	@Param			request	body		UpdateQuizRequest						true	"Fields to change"
+//	@Success		200		{object}	utils.JSONResponse{data=models.Quiz}	"Quiz updated"
+//	@Failure		400		{object}	utils.JSONResponse						"Malformed payload or invalid fields"
+//	@Failure		401		{object}	utils.JSONResponse						"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse						"Not an instructor or admin"
+//	@Failure		404		{object}	utils.JSONResponse						"Quiz not found, or not in a course this user owns"
+//	@Failure		409		{object}	utils.JSONResponse						"Questions cannot change: the quiz already has attempts"
+//	@Failure		500		{object}	utils.JSONResponse						"Internal server error"
+//	@Router			/quizzes/{id} [patch]
+func (h *QuizHandler) UpdateQuiz(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxQuizBodyBytes)
+	var req UpdateQuizRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
+		return
+	}
+
+	in := service.UpdateQuizInput{
+		Title:        req.Title,
+		Description:  req.Description,
+		TimeLimitSec: req.TimeLimitSec,
+		PassPercent:  req.PassPercent,
+		IsFree:       req.IsFree,
+		Status:       req.Status,
+	}
+	if req.Questions != nil {
+		questions := questionInputs(*req.Questions)
+		in.Questions = &questions
+	}
+
+	quiz, err := h.quizService.UpdateQuiz(r.Context(), user, r.PathValue("id"), in)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, quiz)
+}
+
+// DeleteQuiz godoc
+//
+//	@Summary		Delete a quiz
+//	@Description	Course owner (instructor or admin) deletes a quiz. It disappears for everyone, but students' past attempts and scores are kept in the database.
+//	@Tags			quizzes
+//	@Produce		json
+//	@Param			id	path		string							true	"Quiz ID"
+//	@Success		200	{object}	utils.JSONResponse{data=string}	"Quiz deleted"
+//	@Failure		401	{object}	utils.JSONResponse				"Not logged in"
+//	@Failure		403	{object}	utils.JSONResponse				"Not an instructor or admin"
+//	@Failure		404	{object}	utils.JSONResponse				"Quiz not found, or not in a course this user owns"
+//	@Failure		500	{object}	utils.JSONResponse				"Internal server error"
+//	@Router			/quizzes/{id} [delete]
+func (h *QuizHandler) DeleteQuiz(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	if err := h.quizService.DeleteQuiz(r.Context(), user, r.PathValue("id")); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, "quiz deleted")
+}
+
 // UpdateQuizStatus godoc
 //
 //	@Summary		Change quiz status
-//	@Description	Instructor of the course publishes a quiz or moves it back to draft. Students only see published quizzes.
+//	@Description	Course owner (instructor or admin) publishes a quiz or moves it back to draft. Students only see published quizzes.
 //	@Tags			quizzes
 //	@Accept			json
 //	@Produce		json

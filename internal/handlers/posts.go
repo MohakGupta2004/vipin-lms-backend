@@ -37,7 +37,7 @@ func NewPostHandler(postService *service.PostService) *PostHandler {
 // CreatePost godoc
 //
 //	@Summary		Create a post
-//	@Description	Instructor creates a post (with optional links) for one of their own courses.
+//	@Description	Course owner (instructor or admin) creates a post (with optional links) for one of their own courses.
 //	@Tags			posts
 //	@Accept			json
 //	@Produce		json
@@ -113,7 +113,7 @@ func (h *PostHandler) ListFeed(w http.ResponseWriter, r *http.Request) {
 // DeletePost godoc
 //
 //	@Summary		Delete a post
-//	@Description	Instructor deletes a post they created. Its links are deleted too.
+//	@Description	Course owner (instructor or admin) deletes any post in their course. Its links are deleted too.
 //	@Tags			posts
 //	@Produce		json
 //	@Param			id	path		string							true	"Post ID"
@@ -153,7 +153,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrQuizNotFound),
 		errors.Is(err, service.ErrEnrollmentNotFound):
 		utils.WriteJSONResponse(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled):
+	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled), errors.Is(err, service.ErrQuizHasAttempts):
 		utils.WriteJSONResponse(w, http.StatusConflict, err.Error())
 	case errors.Is(err, service.ErrStorageDisabled):
 		utils.WriteJSONResponse(w, http.StatusServiceUnavailable, err.Error())

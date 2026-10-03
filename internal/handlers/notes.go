@@ -36,7 +36,7 @@ func NewNoteHandler(noteService *service.NoteService) *NoteHandler {
 // UploadNote godoc
 //
 //	@Summary		Share a PDF note on a lesson
-//	@Description	Instructor uploads a PDF note to a lesson of a course they teach. Max 25 MB.
+//	@Description	Course owner (instructor or admin) uploads a PDF note to a lesson of their course. Max 25 MB.
 //	@Tags			notes
 //	@Accept			multipart/form-data
 //	@Produce		json
@@ -175,7 +175,7 @@ func (h *NoteHandler) DownloadNote(w http.ResponseWriter, r *http.Request) {
 // DeleteNote godoc
 //
 //	@Summary		Delete a note
-//	@Description	Instructor deletes a note they uploaded. The PDF is removed too.
+//	@Description	Course owner (instructor or admin) deletes a note of their course. The PDF is removed too.
 //	@Tags			notes
 //	@Produce		json
 //	@Param			id	path		string							true	"Note ID"

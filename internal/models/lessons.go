@@ -32,12 +32,13 @@ func NewLessonRepository(db *sql.DB) *LessonRepository {
 
 // CourseAccess says how a user relates to a course. It returns sql.ErrNoRows if the course
 // does not exist or is deleted.
-//   - isInstructor: the user teaches this course.
-//   - isEnrolled: the user has an enrollment that is still valid.
+//   - isInstructor: the user is the course's instructor_id (the caller still checks the role).
+//   - isEnrolled: the course is published and the user has an enrollment that is still valid.
+//     Students never see the content of draft or archived courses.
 func (r *LessonRepository) CourseAccess(ctx context.Context, courseID, userID string) (isInstructor, isEnrolled bool, err error) {
 	query := `
 		SELECT c.instructor_id = $2,
-		       EXISTS (
+		       c.status = 'published' AND EXISTS (
 		           SELECT 1 FROM enrollments e
 		           WHERE e.course_id = c.id
 		             AND e.user_id = $2
@@ -103,4 +104,72 @@ func (r *LessonRepository) GetLesson(ctx context.Context, lessonID string) (*Les
 		return nil, err
 	}
 	return &l, nil
+}
+
+// UpdateLesson saves the editable fields of a lesson. It returns sql.ErrNoRows if the lesson does not exist.
+func (r *LessonRepository) UpdateLesson(ctx context.Context, l *Lesson) error {
+	query := `UPDATE lessons SET title = $1, content = NULLIF($2, ''), is_free = $3, is_published = $4
+		WHERE id = $5 AND deleted_at IS NULL
+		RETURNING id, course_id, title, lesson_type, COALESCE(content, ''),
+		          is_free, is_published, position, created_at`
+
+	return r.db.QueryRowContext(ctx, query, l.Title, l.Content, l.IsFree, l.IsPublished, l.ID).
+		Scan(&l.ID, &l.CourseID, &l.Title, &l.LessonType, &l.Content,
+			&l.IsFree, &l.IsPublished, &l.Position, &l.CreatedAt)
+}
+
+// DeleteLesson removes a lesson in one transaction: its notes are deleted, its quizzes and the lesson
+// itself are soft-deleted (so students' quiz attempts are kept). It returns the storage keys of the
+// deleted notes' files for the caller to remove, or sql.ErrNoRows if the lesson does not exist.
+func (r *LessonRepository) DeleteLesson(ctx context.Context, lessonID string) (objectKeys []string, err error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Rollback does nothing if Commit already succeeded.
+	defer tx.Rollback()
+
+	var id string
+	err = tx.QueryRowContext(ctx, "UPDATE lessons SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id", lessonID).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.QueryContext(ctx, "DELETE FROM notes WHERE lesson_id = $1 RETURNING object_key", lessonID)
+	if err != nil {
+		return nil, err
+	}
+	objectKeys = []string{}
+	for rows.Next() {
+		var key sql.NullString
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if key.Valid {
+			objectKeys = append(objectKeys, key.String)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	_, err = tx.ExecContext(ctx, "UPDATE quizzes SET deleted_at = now() WHERE lesson_id = $1 AND deleted_at IS NULL", lessonID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return objectKeys, nil
+}
+
+// HasNoteFiles reports whether any note of the lesson has a stored file.
+func (r *LessonRepository) HasNoteFiles(ctx context.Context, lessonID string) (bool, error) {
+	var exists bool
+	query := "SELECT EXISTS (SELECT 1 FROM notes WHERE lesson_id = $1 AND object_key IS NOT NULL)"
+	err := r.db.QueryRowContext(ctx, query, lessonID).Scan(&exists)
+	return exists, err
 }

@@ -29,7 +29,7 @@ func NewPostRepository(db *sql.DB) *PostRepository {
 }
 
 // GetCourseTitleForInstructor returns the course title only if the course
-// exists and is taught by this instructor. It returns sql.ErrNoRows otherwise.
+// exists and this user is its instructor_id (an instructor or an admin who owns it). It returns sql.ErrNoRows otherwise.
 func (r *PostRepository) GetCourseTitleForInstructor(ctx context.Context, courseID, instructorID string) (string, error) {
 	query := `SELECT title FROM courses
 		WHERE id = $1 AND instructor_id = $2 AND deleted_at IS NULL`
@@ -167,11 +167,14 @@ func (r *PostRepository) getLinksByPostIDs(ctx context.Context, postIDs []string
 	return links, rows.Err()
 }
 
-// DeletePost deletes a post only if it was written by authorID.
-// It returns false when no such post exists for this author.
+// DeletePost deletes a post only if it is in a course owned by instructorID.
+// It returns false when no such post exists in this instructor's courses.
 // Links are removed automatically (ON DELETE CASCADE).
-func (r *PostRepository) DeletePost(ctx context.Context, postID, authorID string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, "DELETE FROM posts WHERE id = $1 AND user_id = $2", postID, authorID)
+func (r *PostRepository) DeletePost(ctx context.Context, postID, instructorID string) (bool, error) {
+	query := `DELETE FROM posts p
+		USING courses c
+		WHERE p.id = $1 AND c.id = p.course_id AND c.instructor_id = $2 AND c.deleted_at IS NULL`
+	result, err := r.db.ExecContext(ctx, query, postID, instructorID)
 	if err != nil {
 		return false, err
 	}

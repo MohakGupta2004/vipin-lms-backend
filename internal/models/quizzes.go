@@ -3,8 +3,12 @@ package models
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
+
+// ErrQuizHasAttempts means the quiz's questions cannot be replaced because students already answered them.
+var ErrQuizHasAttempts = errors.New("this quiz already has attempts, so its questions cannot be changed; create a new quiz instead")
 
 // Quiz is a set of single-choice questions on a lesson.
 type Quiz struct {
@@ -93,11 +97,21 @@ func (r *QuizRepository) CreateQuiz(ctx context.Context, q *Quiz) error {
 		return err
 	}
 
-	for i := range q.Questions {
-		qu := &q.Questions[i]
+	if err := insertQuestions(ctx, tx, q.ID, q.Questions); err != nil {
+		return err
+	}
+	q.QuestionCount = len(q.Questions)
+
+	return tx.Commit()
+}
+
+// insertQuestions saves questions with their options under a quiz and fills in their ids.
+func insertQuestions(ctx context.Context, tx *sql.Tx, quizID string, questions []Question) error {
+	for i := range questions {
+		qu := &questions[i]
 		query := `INSERT INTO questions (quiz_id, question_text, explanation, position)
 			VALUES ($1, $2, NULLIF($3, ''), $4) RETURNING id`
-		err := tx.QueryRowContext(ctx, query, q.ID, qu.QuestionText, qu.Explanation, qu.Position).Scan(&qu.ID)
+		err := tx.QueryRowContext(ctx, query, quizID, qu.QuestionText, qu.Explanation, qu.Position).Scan(&qu.ID)
 		if err != nil {
 			return err
 		}
@@ -111,16 +125,69 @@ func (r *QuizRepository) CreateQuiz(ctx context.Context, q *Quiz) error {
 			}
 		}
 	}
-	q.QuestionCount = len(q.Questions)
+	return nil
+}
+
+// UpdateQuiz saves a quiz's details. When replaceQuestions is set, its questions are swapped for
+// q.Questions, which is refused with ErrQuizHasAttempts once anyone has attempted the quiz.
+// It returns sql.ErrNoRows if the quiz does not exist.
+func (r *QuizRepository) UpdateQuiz(ctx context.Context, q *Quiz, replaceQuestions bool) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// FOR UPDATE blocks new attempts (their foreign key check needs this row) until we commit,
+	// so no attempt can be saved against questions that are about to be deleted.
+	var id string
+	err = tx.QueryRowContext(ctx, "SELECT id FROM quizzes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", q.ID).Scan(&id)
+	if err != nil {
+		return err
+	}
+
+	query := `UPDATE quizzes SET title = $1, description = NULLIF($2, ''), time_limit_sec = $3,
+			pass_percent = $4, is_free = $5, status = $6
+		WHERE id = $7`
+	_, err = tx.ExecContext(ctx, query, q.Title, q.Description, q.TimeLimitSec, q.PassPercent, q.IsFree, q.Status, q.ID)
+	if err != nil {
+		return err
+	}
+
+	if replaceQuestions {
+		var hasAttempts bool
+		err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM quiz_attempts WHERE quiz_id = $1)", q.ID).Scan(&hasAttempts)
+		if err != nil {
+			return err
+		}
+		if hasAttempts {
+			return ErrQuizHasAttempts
+		}
+		// Options go with their questions (ON DELETE CASCADE).
+		if _, err := tx.ExecContext(ctx, "DELETE FROM questions WHERE quiz_id = $1", q.ID); err != nil {
+			return err
+		}
+		if err := insertQuestions(ctx, tx, q.ID, q.Questions); err != nil {
+			return err
+		}
+		q.QuestionCount = len(q.Questions)
+	}
 
 	return tx.Commit()
+}
+
+// SoftDelete hides a quiz. Attempts are kept. It returns sql.ErrNoRows if the quiz does not exist.
+func (r *QuizRepository) SoftDelete(ctx context.Context, quizID string) error {
+	var id string
+	return r.db.QueryRowContext(ctx, "UPDATE quizzes SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id", quizID).Scan(&id)
 }
 
 const quizSelect = `SELECT q.id, q.course_id, q.lesson_id, q.created_by, q.title, COALESCE(q.description, ''),
 		q.time_limit_sec, q.pass_percent, q.is_free, q.status,
 		(SELECT COUNT(*) FROM questions qu WHERE qu.quiz_id = q.id), q.created_at, l.is_published
 	FROM quizzes q
-	JOIN lessons l ON l.id = q.lesson_id AND l.deleted_at IS NULL`
+	JOIN lessons l ON l.id = q.lesson_id AND l.deleted_at IS NULL
+	WHERE q.deleted_at IS NULL`
 
 func scanQuiz(row interface{ Scan(...any) error }, q *Quiz) error {
 	var timeLimit sql.NullInt32
@@ -139,7 +206,7 @@ func scanQuiz(row interface{ Scan(...any) error }, q *Quiz) error {
 // GetQuiz returns one quiz without its questions, or sql.ErrNoRows.
 func (r *QuizRepository) GetQuiz(ctx context.Context, quizID string) (*Quiz, error) {
 	var q Quiz
-	if err := scanQuiz(r.db.QueryRowContext(ctx, quizSelect+" WHERE q.id = $1", quizID), &q); err != nil {
+	if err := scanQuiz(r.db.QueryRowContext(ctx, quizSelect+" AND q.id = $1", quizID), &q); err != nil {
 		return nil, err
 	}
 	return &q, nil
@@ -148,13 +215,13 @@ func (r *QuizRepository) GetQuiz(ctx context.Context, quizID string) (*Quiz, err
 // UpdateStatus changes a quiz's status. It returns sql.ErrNoRows if the quiz does not exist.
 func (r *QuizRepository) UpdateStatus(ctx context.Context, quizID, status string) error {
 	var id string
-	return r.db.QueryRowContext(ctx, "UPDATE quizzes SET status = $1 WHERE id = $2 RETURNING id", status, quizID).Scan(&id)
+	return r.db.QueryRowContext(ctx, "UPDATE quizzes SET status = $1 WHERE id = $2 AND deleted_at IS NULL RETURNING id", status, quizID).Scan(&id)
 }
 
 // ListByLesson returns a lesson's quizzes, oldest first. Drafts are left out unless includeDrafts is set.
 func (r *QuizRepository) ListByLesson(ctx context.Context, lessonID string, includeDrafts bool) ([]Quiz, error) {
 	query := quizSelect + `
-		WHERE q.lesson_id = $1 AND ($2 OR q.status = 'published')
+		AND q.lesson_id = $1 AND ($2 OR q.status = 'published')
 		ORDER BY q.created_at, q.id`
 
 	rows, err := r.db.QueryContext(ctx, query, lessonID, includeDrafts)

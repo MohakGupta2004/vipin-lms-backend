@@ -82,9 +82,10 @@ func main() {
 	postService := service.NewPostService(postRepo)
 	courseService := service.NewCourseService(courseRepo)
 	enrollmentService := service.NewEnrollmentService(enrollmentRepo)
-	lessonService := service.NewLessonService(lessonRepo, noteRepo)
+	lessonService := service.NewLessonService(lessonRepo, noteRepo, pdfStore)
 	noteService := service.NewNoteService(noteRepo, lessonRepo, pdfStore)
 	quizService := service.NewQuizService(quizRepo, lessonRepo)
+	userService := service.NewUserService(userRepo)
 
 	// middlewares
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
@@ -98,6 +99,7 @@ func main() {
 	lessonHandler := handlers.NewLessonHandler(lessonService)
 	noteHandler := handlers.NewNoteHandler(noteService)
 	quizHandler := handlers.NewQuizHandler(quizService)
+	userHandler := handlers.NewUserHandler(userService)
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
@@ -107,16 +109,25 @@ func main() {
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.RegisterHandler)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.LoginHandler)
 	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.RefreshTokenHandler)
+	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.LogoutHandler) // no auth: must work with an expired session
+	mux.Handle("GET /api/v1/auth/me", authMiddleware.RequireAuth(http.HandlerFunc(authHandler.MeHandler)))
+
+	// user routes (admin only, checked in the service)
+	mux.Handle("GET /api/v1/users", authMiddleware.RequireAuth(http.HandlerFunc(userHandler.ListUsers)))
 
 	// post routes (login required)
 	mux.Handle("POST /api/v1/posts", authMiddleware.RequireAuth(http.HandlerFunc(postHandler.CreatePost)))
 	mux.Handle("GET /api/v1/posts", authMiddleware.RequireAuth(http.HandlerFunc(postHandler.ListFeed)))
 	mux.Handle("DELETE /api/v1/posts/{id}", authMiddleware.RequireAuth(http.HandlerFunc(postHandler.DeletePost)))
 
-	// course routes (admin only, checked in the service)
+	// course routes (create/list all: admin only; edit/delete/status: course owner; checked in the service)
 	mux.Handle("POST /api/v1/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.CreateCourse)))
 	mux.Handle("GET /api/v1/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.ListCourses)))
-	mux.Handle("PATCH /api/v1/courses/{id}/status", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.UpdateCourseStatus))) // instructor only
+	mux.Handle("GET /api/v1/courses/{id}", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.GetCourse)))
+	mux.Handle("PATCH /api/v1/courses/{id}", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.UpdateCourse)))
+	mux.Handle("DELETE /api/v1/courses/{id}", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.DeleteCourse)))
+	mux.Handle("PATCH /api/v1/courses/{id}/status", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.UpdateCourseStatus)))
+	mux.Handle("GET /api/v1/me/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.ListMyCourses)))
 
 	// exam routes (any logged-in user)
 	mux.Handle("GET /api/v1/exams", authMiddleware.RequireAuth(http.HandlerFunc(examHandler.ListExams)))
@@ -126,19 +137,23 @@ func main() {
 	mux.Handle("GET /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.ListEnrollments)))
 	mux.Handle("PATCH /api/v1/enrollments/{id}", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.UpdateEnrollmentStatus)))
 
-	// lessons (chapters) and their PDF notes (instructor writes; instructor and enrolled students read)
+	// lessons (chapters) and their PDF notes (course owner writes; owner and enrolled students read)
 	mux.Handle("POST /api/v1/courses/{id}/lessons", authMiddleware.RequireAuth(http.HandlerFunc(lessonHandler.CreateLesson)))
 	mux.Handle("GET /api/v1/courses/{id}/lessons", authMiddleware.RequireAuth(http.HandlerFunc(lessonHandler.ListLessons)))
+	mux.Handle("PATCH /api/v1/lessons/{id}", authMiddleware.RequireAuth(http.HandlerFunc(lessonHandler.UpdateLesson)))
+	mux.Handle("DELETE /api/v1/lessons/{id}", authMiddleware.RequireAuth(http.HandlerFunc(lessonHandler.DeleteLesson)))
 	mux.Handle("POST /api/v1/lessons/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.UploadNote)))
 	mux.Handle("GET /api/v1/courses/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.ListNotes)))
 	mux.Handle("GET /api/v1/notes/{id}/file", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DownloadNote)))
 	mux.Handle("DELETE /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DeleteNote)))
 
-	// quizzes on lessons (instructor creates; enrolled students take them)
+	// quizzes on lessons (course owner creates and edits; enrolled students take them)
 	mux.Handle("POST /api/v1/lessons/{id}/quizzes", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.CreateQuiz)))
 	mux.Handle("GET /api/v1/lessons/{id}/quizzes", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.ListQuizzes)))
-	mux.Handle("PATCH /api/v1/quizzes/{id}/status", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.UpdateQuizStatus))) // instructor only
+	mux.Handle("PATCH /api/v1/quizzes/{id}/status", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.UpdateQuizStatus)))
 	mux.Handle("GET /api/v1/quizzes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.GetQuiz)))
+	mux.Handle("PATCH /api/v1/quizzes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.UpdateQuiz)))
+	mux.Handle("DELETE /api/v1/quizzes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.DeleteQuiz)))
 	mux.Handle("POST /api/v1/quizzes/{id}/attempts", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.SubmitAttempt)))
 	mux.Handle("GET /api/v1/quizzes/{id}/attempts", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.ListAttempts)))
 

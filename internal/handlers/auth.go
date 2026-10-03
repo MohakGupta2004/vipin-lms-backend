@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/lib/utils"
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/middleware"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/service"
 	"github.com/golang-jwt/jwt/v5"
@@ -132,11 +133,20 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	claims := token.Claims.(jwt.MapClaims)
-	userId := claims["sub"].(string)
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "invalid refresh token")
+		return
+	}
+	userId, err := claims.GetSubject()
+	if err != nil || userId == "" {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "invalid refresh token")
+		return
+	}
 
+	// GetUserById returns (nil, nil) when the account no longer exists.
 	user, err := h.userRepo.GetUserById(userId, ctx)
-	if err != nil {
+	if err != nil || user == nil {
 		utils.WriteJSONResponse(w, http.StatusBadRequest, "user not found")
 		return
 	}
@@ -147,6 +157,53 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 	}
 	setAuthCookies(w, newAccessToken, newRefreshToken)
 	utils.WriteJSONResponse(w, http.StatusAccepted, "access token updated successfully")
+}
+
+// MeHandler godoc
+//
+//	@Summary		Get the logged-in user
+//	@Description	Returns the user the access_token cookie belongs to, with their current role read from the database.
+//	@Tags			auth
+//	@Produce		json
+//	@Success		200	{object}	utils.JSONResponse{data=models.User}	"Logged-in user"
+//	@Failure		401	{object}	utils.JSONResponse						"Not logged in"
+//	@Router			/auth/me [get]
+func (h *AuthHandler) MeHandler(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, user)
+}
+
+// LogoutHandler godoc
+//
+//	@Summary		Log out
+//	@Description	Clears the access_token and refresh_token cookies. Works without a valid session.
+//	@Description	Tokens are stateless JWTs, so a copied token stays valid until it expires.
+//	@Tags			auth
+//	@Produce		json
+//	@Success		200	{object}	utils.JSONResponse{data=string}	"Logged out"
+//	@Router			/auth/logout [post]
+func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	clearAuthCookies(w)
+	utils.WriteJSONResponse(w, http.StatusOK, "logged out")
+}
+
+// clearAuthCookies tells the browser to drop both auth cookies right away.
+// Name, Path and attributes must match setAuthCookies or the browser keeps the originals.
+func clearAuthCookies(w http.ResponseWriter) {
+	for _, name := range []string{"access_token", "refresh_token"} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1, // sent as Max-Age=0: expire now
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 }
 
 // setAuthCookies stores both tokens as HttpOnly cookies.

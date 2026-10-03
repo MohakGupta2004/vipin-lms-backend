@@ -44,9 +44,9 @@ func NewNoteService(noteRepo *models.NoteRepository, lessonRepo *models.LessonRe
 	}
 }
 
-// UploadNote lets an instructor share a PDF on a lesson of a course they teach.
+// UploadNote lets the course owner (instructor or admin) share a PDF on a lesson of their course.
 func (s *NoteService) UploadNote(ctx context.Context, user *models.User, lessonID, title, description, fileName string, file io.Reader) (*models.Note, error) {
-	if user.Role != models.RoleInstructor {
+	if !user.CanTeach() {
 		return nil, ErrForbidden
 	}
 	if !s.store.Enabled() {
@@ -153,9 +153,9 @@ func (s *NoteService) OpenNote(ctx context.Context, user *models.User, noteID st
 	return note, rc, nil
 }
 
-// DeleteNote lets the instructor who uploaded a note delete it.
+// DeleteNote lets the course owner (instructor or admin) delete a note of their course.
 func (s *NoteService) DeleteNote(ctx context.Context, user *models.User, noteID string) error {
-	if user.Role != models.RoleInstructor {
+	if !user.CanTeach() {
 		return ErrForbidden
 	}
 	// Deleting the row while storage is off would leave the file behind forever.
@@ -166,8 +166,12 @@ func (s *NoteService) DeleteNote(ctx context.Context, user *models.User, noteID 
 	if err != nil {
 		return err
 	}
-	if note.UploadedBy != user.ID {
-		return ErrNoteNotFound
+	// Not the owner of this course: pretend the note does not exist.
+	if err := requireTeacher(ctx, s.lessonRepo, user, note.CourseID); err != nil {
+		if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) {
+			return ErrNoteNotFound
+		}
+		return err
 	}
 
 	objectKey, err := s.noteRepo.Delete(ctx, noteID)
@@ -194,9 +198,15 @@ func (s *NoteService) getNote(ctx context.Context, noteID string) (*models.Note,
 
 // deleteObject removes a stored file on a best-effort basis; a failure only leaves an orphan file.
 func (s *NoteService) deleteObject(object string) {
+	deleteStoredPDF(s.store, object)
+}
+
+// deleteStoredPDF removes a stored file on a best-effort basis; a failure only leaves an orphan file.
+// It uses a fresh context because the request may already be cancelled.
+func deleteStoredPDF(store storage.PDFStore, object string) {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
-	if err := s.store.DeletePDF(ctx, object); err != nil {
+	if err := store.DeletePDF(ctx, object); err != nil {
 		slog.Error("failed to delete stored note file", "object", object, "err", err)
 	}
 }
