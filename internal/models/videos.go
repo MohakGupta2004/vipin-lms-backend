@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 	"unicode/utf8"
 )
@@ -170,4 +171,24 @@ func (r *VideoRepository) mustAffect(ctx context.Context, query string, args ...
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// SaveProgress stores where the user stopped in a video, replacing any earlier position.
+func (r *VideoRepository) SaveProgress(ctx context.Context, userID, videoID string, positionSec int) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO video_progress (user_id, video_id, position_sec)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, video_id) DO UPDATE SET position_sec = EXCLUDED.position_sec`,
+		userID, videoID, positionSec)
+	return err
+}
+
+// GetProgress returns where the user stopped in a video, or 0 if they never played it.
+func (r *VideoRepository) GetProgress(ctx context.Context, userID, videoID string) (int, error) {
+	var positionSec int
+	err := r.db.QueryRowContext(ctx, `SELECT position_sec FROM video_progress WHERE user_id = $1 AND video_id = $2`,
+		userID, videoID).Scan(&positionSec)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return positionSec, err
 }

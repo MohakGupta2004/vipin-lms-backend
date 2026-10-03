@@ -329,6 +329,19 @@ hls.attachMedia(video);
 // refetch /stream before s.expiresAt or on a 403, then loadSource again at the current time
 ```
 
+### Resume where the student stopped
+
+Requires migration `27_create_table_video_progress` (`make migrate-up`).
+
+- `PUT /videos/{id}/progress {"positionSec": 754}` → `200 {positionSec}`. Same access rule as `/stream`. `400` if not 0–86400. Frontend calls it every 10–15 s while playing and on pause; send `0` when the video ends so the next play starts over.
+- `GET /videos/{id}/stream` now also returns `resumeAt` (seconds). When it is > 0, `manifestUrl` ends with `&start=754` and the API adds `#EXT-X-START:TIME-OFFSET=754,PRECISE=YES` to `manifest.m3u8`, so hls.js and Safari start there by themselves. In your own player you can also use `new Hls({startPosition: s.resumeAt})`.
+
+```
+curl -b student.jar -X PUT -H 'Content-Type: application/json' -d '{"positionSec":754}' $B/videos/$VID/progress
+curl -b student.jar $B/videos/$VID/stream          # resumeAt 754, manifestUrl ...&start=754
+curl -s "$manifestUrl" | head -2                    # #EXTM3U / #EXT-X-START:TIME-OFFSET=754,PRECISE=YES
+```
+
 Known limits: videos stuck in `uploading` are not cleaned up (add a bucket lifecycle rule); `duration_sec` stays NULL; `CDN_DOMAIN` as plain `http://` exposes the signed query on the network, and an `https://` page will block `http://` segments (mixed content), so use HTTPS for both API and CDN in prod.
 
 ## Migrations added
@@ -338,3 +351,4 @@ Known limits: videos stuck in `uploading` are not cleaned up (add a bucket lifec
 | `24_quizzes_soft_delete` | `quizzes.deleted_at` column | Drops it |
 | `25_courses_slug_unique_active` | Slug unique only among non-deleted courses | Restores `courses_slug_key`. Fails if a deleted course and a live course share a slug |
 | `26_videos_lessons_and_transcoding` | `videos.lesson_id`, `is_free`, `transcode_job` + index | Drops them |
+| `27_create_table_video_progress` | `video_progress(user_id, video_id, position_sec)` for resume | Drops the table |

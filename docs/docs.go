@@ -2955,6 +2955,89 @@ const docTemplate = `{
                 }
             }
         },
+        "/videos/{id}/progress": {
+            "put": {
+                "description": "Call every 10-15 seconds while playing and on pause. The next GET /videos/{id}/stream returns it as resumeAt and the manifest starts playback there. Send 0 when the video ends so it restarts from the beginning.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "videos"
+                ],
+                "summary": "Save where the user stopped in a video",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Video ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Position in seconds (0 to 86400)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.saveVideoProgressBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Saved",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/handlers.VideoProgressResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body or position",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Video not found, or not visible to this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Video is not ready yet (owner only)",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/videos/{id}/retry": {
             "post": {
                 "description": "Starts a new transcoding job for a video whose status is failed. The uploaded file is reused. Poll GET /videos/{id} until status is ready or failed.",
@@ -3400,6 +3483,14 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.VideoProgressResponse": {
+            "type": "object",
+            "properties": {
+                "positionSec": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.VideoResponse": {
             "type": "object",
             "properties": {
@@ -3419,6 +3510,10 @@ const docTemplate = `{
                 },
                 "queryParams": {
                     "type": "string"
+                },
+                "resumeAt": {
+                    "description": "seconds; where the user stopped last time, 0 = from the start",
+                    "type": "integer"
                 }
             }
         },
@@ -3464,6 +3559,14 @@ const docTemplate = `{
                 },
                 "isFree": {
                     "type": "boolean"
+                }
+            }
+        },
+        "handlers.saveVideoProgressBody": {
+            "type": "object",
+            "properties": {
+                "positionSec": {
+                    "type": "integer"
                 }
             }
         },

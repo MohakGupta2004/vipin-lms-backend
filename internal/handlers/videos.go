@@ -184,6 +184,7 @@ type VideoStreamResponse struct {
 	ManifestURL string    `json:"manifestUrl"`
 	QueryParams string    `json:"queryParams"`
 	ExpiresAt   time.Time `json:"expiresAt"`
+	ResumeAt    int       `json:"resumeAt"` // seconds; where the user stopped last time, 0 = from the start
 }
 
 // StreamVideo godoc
@@ -217,6 +218,7 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 		ManifestURL: st.ManifestURL,
 		QueryParams: st.QueryParams,
 		ExpiresAt:   st.ExpiresAt,
+		ResumeAt:    st.ResumeAt,
 	})
 }
 
@@ -312,4 +314,52 @@ func (h *VideoHandler) ListCourseVideos(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	utils.WriteJSONResponse(w, http.StatusOK, VideosResponse{Videos: videos})
+}
+
+type saveVideoProgressBody struct {
+	PositionSec int `json:"positionSec"`
+}
+
+// VideoProgressResponse is the saved playback position.
+type VideoProgressResponse struct {
+	PositionSec int `json:"positionSec"`
+}
+
+// SaveVideoProgress godoc
+//
+//	@Summary		Save where the user stopped in a video
+//	@Description	Call every 10-15 seconds while playing and on pause. The next GET /videos/{id}/stream returns it as resumeAt and the manifest starts playback there. Send 0 when the video ends so it restarts from the beginning.
+//	@Tags			videos
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string											true	"Video ID"
+//	@Param			body	body		saveVideoProgressBody							true	"Position in seconds (0 to 86400)"
+//	@Success		200		{object}	utils.JSONResponse{data=VideoProgressResponse}	"Saved"
+//	@Failure		400		{object}	utils.JSONResponse								"Invalid body or position"
+//	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
+//	@Failure		404		{object}	utils.JSONResponse								"Video not found, or not visible to this user"
+//	@Failure		409		{object}	utils.JSONResponse								"Video is not ready yet (owner only)"
+//	@Failure		500		{object}	utils.JSONResponse								"Internal server error"
+//	@Router			/videos/{id}/progress [put]
+func (h *VideoHandler) SaveVideoProgress(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxVideoRequestBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	var body saveVideoProgressBody
+	if err := dec.Decode(&body); err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.videoService.SaveProgress(r.Context(), user, r.PathValue("id"), body.PositionSec); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, VideoProgressResponse{PositionSec: body.PositionSec})
 }

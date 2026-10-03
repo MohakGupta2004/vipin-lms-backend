@@ -79,3 +79,14 @@ func TestPlaylistNamePattern(t *testing.T) {
 		}
 	}
 }
+
+func TestAddStartTime(t *testing.T) {
+	got := string(addStartTime([]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmedia-sd.m3u8\n"), 754))
+	want := "#EXTM3U\n#EXT-X-START:TIME-OFFSET=754,PRECISE=YES\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmedia-sd.m3u8\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+	if got := string(addStartTime([]byte("not a playlist"), 754)); got != "not a playlist" {
+		t.Errorf("non-playlist changed: %q", got)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,6 +26,8 @@ const (
 	streamURLExpiry = 15 * time.Minute
 	// maxPlaylistBytes caps an .m3u8 file read from storage; real ones are a few KB.
 	maxPlaylistBytes = 1 << 20
+	// maxVideoPositionSec caps a saved playback position (24 hours), since video durations are not stored yet.
+	maxVideoPositionSec = 24 * 60 * 60
 )
 
 // playlistNamePattern is a playlist file directly inside a video's hls/ folder, e.g. "media-sd.m3u8".
@@ -215,20 +218,62 @@ func (s *VideoService) GetVideo(ctx context.Context, user *models.User, videoID 
 // VideoStream is a ready-to-use signed manifest URL. The manifest is served by the API with every
 // playlist and segment URL inside already signed, so any HLS player can open it as-is.
 // QueryParams is the bare signature, for clients that want to build URLs themselves.
+// ResumeAt is where the user stopped last time, in seconds (0 = from the start).
 type VideoStream struct {
 	ManifestURL string
 	QueryParams string
 	ExpiresAt   time.Time
+	ResumeAt    int
 }
 
 // StreamVideo returns a short-lived signed URL for a ready video the user may watch.
 // playlistBase is the API URL that serves playlists, e.g. "http://localhost:3000/api/v1/videos/{id}/hls/".
+// When the user has a saved position, the manifest URL carries it as "start" so the playlist tells
+// the player to begin there.
 func (s *VideoService) StreamVideo(ctx context.Context, user *models.User, videoID, playlistBase string) (*VideoStream, error) {
-	if !uuidPattern.MatchString(videoID) {
-		return nil, ErrVideoNotFound
-	}
 	if s.signer == nil {
 		return nil, ErrStorageDisabled
+	}
+	video, err := s.watchableVideo(ctx, user, videoID)
+	if err != nil {
+		return nil, err
+	}
+	resumeAt, err := s.videoRepo.GetProgress(ctx, user.ID, video.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	expires := time.Now().Add(streamURLExpiry)
+	query := s.signer.SignPrefix("/"+video.HLSPrefix, expires)
+	manifestURL := playlistBase + "manifest.m3u8?" + query
+	if resumeAt > 0 {
+		manifestURL += "&start=" + strconv.Itoa(resumeAt)
+	}
+	return &VideoStream{
+		ManifestURL: manifestURL,
+		QueryParams: query,
+		ExpiresAt:   expires,
+		ResumeAt:    resumeAt,
+	}, nil
+}
+
+// SaveProgress stores where the user stopped in a video they may watch, so the next stream resumes there.
+func (s *VideoService) SaveProgress(ctx context.Context, user *models.User, videoID string, positionSec int) error {
+	if positionSec < 0 || positionSec > maxVideoPositionSec {
+		return fmt.Errorf("%w: positionSec must be 0 to %d", ErrInvalidInput, maxVideoPositionSec)
+	}
+	video, err := s.watchableVideo(ctx, user, videoID)
+	if err != nil {
+		return err
+	}
+	return s.videoRepo.SaveProgress(ctx, user.ID, video.ID, positionSec)
+}
+
+// watchableVideo loads a ready video the user may watch: the course owner, an enrolled student, or any
+// logged-in user for a free video in a published course. Anything else looks like a missing video.
+func (s *VideoService) watchableVideo(ctx context.Context, user *models.User, videoID string) (*models.Video, error) {
+	if !uuidPattern.MatchString(videoID) {
+		return nil, ErrVideoNotFound
 	}
 	video, err := s.videoRepo.Get(ctx, videoID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -260,14 +305,7 @@ func (s *VideoService) StreamVideo(ctx context.Context, user *models.User, video
 		}
 		return nil, ErrVideoNotReady
 	}
-
-	expires := time.Now().Add(streamURLExpiry)
-	query := s.signer.SignPrefix("/"+video.HLSPrefix, expires)
-	return &VideoStream{
-		ManifestURL: playlistBase + "manifest.m3u8?" + query,
-		QueryParams: query,
-		ExpiresAt:   expires,
-	}, nil
+	return video, nil
 }
 
 // VideoPlaylist returns one of a ready video's HLS playlists with every URI inside rewritten to a signed URL:
@@ -313,7 +351,21 @@ func (s *VideoService) VideoPlaylist(ctx context.Context, videoID, fileName, pla
 		}
 		return s.signer.URL(video.HLSPrefix+uri) + "?" + query
 	}
-	return rewritePlaylist(data, signURI), nil
+	data = rewritePlaylist(data, signURI)
+	// "start" is not signed: changing it only moves where this viewer's own playback begins.
+	if start, err := strconv.Atoi(q.Get("start")); err == nil && fileName == "manifest.m3u8" && start > 0 && start <= maxVideoPositionSec {
+		data = addStartTime(data, start)
+	}
+	return data, nil
+}
+
+// addStartTime tells HLS players to begin playback at sec, by adding #EXT-X-START after the #EXTM3U header.
+func addStartTime(data []byte, sec int) []byte {
+	header, rest, found := strings.Cut(string(data), "\n")
+	if !found || header != "#EXTM3U" {
+		return data
+	}
+	return []byte(header + "\n#EXT-X-START:TIME-OFFSET=" + strconv.Itoa(sec) + ",PRECISE=YES\n" + rest)
 }
 
 // uriAttrPattern finds URI="..." inside tags such as #EXT-X-MEDIA and #EXT-X-MAP.
