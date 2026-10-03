@@ -42,3 +42,40 @@ func TestValidateVideoFileName(t *testing.T) {
 		}
 	}
 }
+
+func TestRewritePlaylist(t *testing.T) {
+	in := "#EXTM3U\r\n" +
+		"#EXT-X-MEDIA:TYPE=AUDIO,URI=\"audio.m3u8\"\r\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=1\r\n" +
+		"media-sd.m3u8\r\n" +
+		"#EXTINF:6.000,\r\n" +
+		"media-sd0000000000.ts\r\n" +
+		"\r\n"
+	got := string(rewritePlaylist([]byte(in), func(uri string) string { return "S(" + uri + ")" }))
+	want := "#EXTM3U\n" +
+		"#EXT-X-MEDIA:TYPE=AUDIO,URI=\"S(audio.m3u8)\"\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=1\n" +
+		"S(media-sd.m3u8)\n" +
+		"#EXTINF:6.000,\n" +
+		"S(media-sd0000000000.ts)\n" +
+		"\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestPlaylistNamePattern(t *testing.T) {
+	for name, ok := range map[string]bool{
+		"manifest.m3u8": true,
+		"media-sd.m3u8": true,
+		"../x.m3u8":     false,
+		"a/b.m3u8":      false,
+		"seg.ts":        false,
+		"source.mp4":    false,
+		".m3u8":         false,
+	} {
+		if playlistNamePattern.MatchString(name) != ok {
+			t.Errorf("%q: want %v", name, ok)
+		}
+	}
+}

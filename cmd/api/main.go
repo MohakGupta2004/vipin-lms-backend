@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/cdn"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/config"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/database"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/handlers"
@@ -68,7 +69,12 @@ func main() {
 	// Video storage and transcoding follow the same switch.
 	var videoStore storage.VideoStore = storage.DisabledVideoStore{}
 	var transcodeClient *transcoder.Client
+	var cdnSigner *cdn.Signer
 	if cfg.GCSEnabled {
+		cdnSigner, err = cdn.NewSigner(cfg.CDNDomain, cfg.CDNKeyName, cfg.CDNSigningKey)
+		if err != nil {
+			panic(err)
+		}
 		videoStore, err = storage.NewGCSVideoStore(ctx, cfg.GCSBucketName)
 		if err != nil {
 			panic(err)
@@ -113,7 +119,7 @@ func main() {
 	if transcodeQueue != nil {
 		videoEnqueuer = transcodeQueue
 	}
-	videoService := service.NewVideoService(videoRepo, lessonRepo, videoStore, videoEnqueuer)
+	videoService := service.NewVideoService(videoRepo, lessonRepo, videoStore, videoEnqueuer, cdnSigner)
 
 	// middlewares
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
@@ -181,6 +187,11 @@ func main() {
 	mux.Handle("POST /api/v1/videos/{id}/confirm", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.ConfirmUpload)))
 	mux.Handle("POST /api/v1/videos/{id}/retry", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.RetryTranscode)))
 	mux.Handle("GET /api/v1/videos/{id}", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.GetVideo)))
+	// playback: signed CDN URL + video lists for owners and students
+	mux.Handle("GET /api/v1/videos/{id}/stream", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.StreamVideo)))
+	mux.HandleFunc("GET /api/v1/videos/{id}/hls/{file}", videoHandler.VideoPlaylist) // no auth: the signed query is the credential
+	mux.Handle("GET /api/v1/lessons/{id}/videos", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.ListLessonVideos)))
+	mux.Handle("GET /api/v1/courses/{id}/videos", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.ListCourseVideos)))
 
 	// quizzes on lessons (course owner creates and edits; enrolled students take them)
 	mux.Handle("POST /api/v1/lessons/{id}/quizzes", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.CreateQuiz)))

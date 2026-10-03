@@ -36,10 +36,10 @@ func NewVideoRepository(db *sql.DB) *VideoRepository {
 	return &VideoRepository{db: db}
 }
 
-const videoSelect = `SELECT id, COALESCE(lesson_id::text, ''), COALESCE(course_id::text, ''), uploaded_by, title, is_free,
-		status, COALESCE(error, ''), COALESCE(size_bytes, 0), created_at, updated_at,
-		original_key, COALESCE(transcode_job, ''), COALESCE(hls_prefix, '')
-	FROM videos`
+const videoSelect = `SELECT v.id, COALESCE(v.lesson_id::text, ''), COALESCE(v.course_id::text, ''), v.uploaded_by, v.title, v.is_free,
+		v.status, COALESCE(v.error, ''), COALESCE(v.size_bytes, 0), v.created_at, v.updated_at,
+		v.original_key, COALESCE(v.transcode_job, ''), COALESCE(v.hls_prefix, '')
+	FROM videos v`
 
 func scanVideo(row interface{ Scan(...any) error }, v *Video) error {
 	return row.Scan(&v.ID, &v.LessonID, &v.CourseID, &v.UploadedBy, &v.Title, &v.IsFree,
@@ -59,10 +59,46 @@ func (r *VideoRepository) Create(ctx context.Context, v *Video) error {
 // Get returns one video, or sql.ErrNoRows.
 func (r *VideoRepository) Get(ctx context.Context, id string) (*Video, error) {
 	var v Video
-	if err := scanVideo(r.db.QueryRowContext(ctx, videoSelect+` WHERE id = $1`, id), &v); err != nil {
+	if err := scanVideo(r.db.QueryRowContext(ctx, videoSelect+` WHERE v.id = $1`, id), &v); err != nil {
 		return nil, err
 	}
 	return &v, nil
+}
+
+// VideoListFilter narrows List. CourseID is required.
+type VideoListFilter struct {
+	CourseID  string
+	LessonID  string // empty = whole course
+	OnlyReady bool   // students: ready videos of published lessons
+	OnlyFree  bool   // not enrolled: free videos or videos of free lessons
+}
+
+// List returns a course's videos in lesson order. Videos of deleted lessons are left out.
+func (r *VideoRepository) List(ctx context.Context, f VideoListFilter) ([]Video, error) {
+	query := videoSelect + ` JOIN lessons l ON l.id = v.lesson_id AND l.deleted_at IS NULL
+		WHERE v.course_id = $1
+		  AND ($2::uuid IS NULL OR v.lesson_id = $2::uuid)
+		  AND (NOT $3 OR (v.status = 'ready' AND l.is_published))
+		  AND (NOT $4 OR v.is_free OR l.is_free)
+		ORDER BY l.position, v.created_at`
+	var lessonID any
+	if f.LessonID != "" {
+		lessonID = f.LessonID
+	}
+	rows, err := r.db.QueryContext(ctx, query, f.CourseID, lessonID, f.OnlyReady, f.OnlyFree)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	videos := []Video{}
+	for rows.Next() {
+		var v Video
+		if err := scanVideo(rows, &v); err != nil {
+			return nil, err
+		}
+		videos = append(videos, v)
+	}
+	return videos, rows.Err()
 }
 
 // MarkProcessing moves an 'uploading' video to 'processing'. It returns sql.ErrNoRows if the video is

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HLS stream test</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<style>body{font-family:sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem}input,button{width:100%;margin:.25rem 0;padding:.5rem;box-sizing:border-box}video{width:100%;background:#000}</style>
+</head>
+<body>
+<h1>HLS stream test</h1>
+<input id="url" placeholder="manifestUrl from GET /videos/{id}/stream">
+<button id="go">Play</button>
+<video id="v" controls></video>
+<script>
+document.getElementById("go").onclick = () => {
+  const manifest = document.getElementById("url").value.trim();
+  const video = document.getElementById("v");
+  // every URL inside the playlists is already signed, so no player setup is needed
+  if (!Hls.isSupported()) { video.src = manifest; return; }
+  const hls = new Hls();
+  hls.loadSource(manifest);
+  hls.attachMedia(video);
+  hls.on(Hls.Events.ERROR, (_, d) => console.error(d));
+};
+</script>
+</body>
+</html>

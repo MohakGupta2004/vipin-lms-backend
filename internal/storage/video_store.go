@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +46,8 @@ type VideoStore interface {
 	SignedUploadURL(object, contentType string, maxBytes int64, expires time.Duration) (url string, headers map[string]string, err error)
 	// ObjectInfo returns the size and content type of a stored object, or ErrObjectNotFound.
 	ObjectInfo(ctx context.Context, object string) (size int64, contentType string, err error)
+	// ReadSmallObject returns a stored object's bytes, or ErrObjectNotFound. Objects over maxBytes are an error.
+	ReadSmallObject(ctx context.Context, object string, maxBytes int64) ([]byte, error)
 	// URI returns the gs://bucket/object address of an object.
 	URI(object string) string
 	Close() error
@@ -104,6 +107,25 @@ func (s *GCSVideoStore) ObjectInfo(ctx context.Context, object string) (int64, s
 	return attrs.Size, attrs.ContentType, nil
 }
 
+func (s *GCSVideoStore) ReadSmallObject(ctx context.Context, object string, maxBytes int64) ([]byte, error) {
+	rc, err := s.client.Bucket(s.bucket).Object(object).NewReader(ctx)
+	if errors.Is(err, gcs.ErrObjectNotExist) {
+		return nil, ErrObjectNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage: open object: %w", err)
+	}
+	defer rc.Close()
+	if rc.Attrs.Size > maxBytes {
+		return nil, fmt.Errorf("storage: object %s is larger than %d bytes", object, maxBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(rc, maxBytes))
+	if err != nil {
+		return nil, fmt.Errorf("storage: read object: %w", err)
+	}
+	return data, nil
+}
+
 func (s *GCSVideoStore) URI(object string) string {
 	return fmt.Sprintf("gs://%s/%s", s.bucket, object)
 }
@@ -123,6 +145,10 @@ func (DisabledVideoStore) SignedUploadURL(string, string, int64, time.Duration) 
 
 func (DisabledVideoStore) ObjectInfo(context.Context, string) (int64, string, error) {
 	return 0, "", ErrStorageDisabled
+}
+
+func (DisabledVideoStore) ReadSmallObject(context.Context, string, int64) ([]byte, error) {
+	return nil, ErrStorageDisabled
 }
 
 func (DisabledVideoStore) URI(string) string { return "" }

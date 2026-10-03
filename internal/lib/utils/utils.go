@@ -22,5 +22,8 @@ func WriteJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) 
 		response.Status = "error"
 		response.Message = data.(string) // Assuming data is a string for error messages
 	}
-	json.NewEncoder(w).Encode(response)
+	// keep '&' literal so signed URLs in responses survive copy-paste from raw output
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.Encode(response)
 }

@@ -196,6 +196,15 @@ definitions:
       video:
         $ref: '#/definitions/models.Video'
     type: object
+  handlers.VideoStreamResponse:
+    properties:
+      expiresAt:
+        type: string
+      manifestUrl:
+        type: string
+      queryParams:
+        type: string
+    type: object
   handlers.VideoUploadResponse:
     properties:
       expiresAt:
@@ -210,6 +219,13 @@ definitions:
         type: string
       video:
         $ref: '#/definitions/models.Video'
+    type: object
+  handlers.VideosResponse:
+    properties:
+      videos:
+        items:
+          $ref: '#/definitions/models.Video'
+        type: array
     type: object
   handlers.requestVideoUploadBody:
     properties:
@@ -1089,6 +1105,43 @@ paths:
       summary: Change course status
       tags:
       - courses
+  /courses/{id}/videos:
+    get:
+      description: Owner sees every video. Students see ready videos of published
+        lessons; users not enrolled see only free ones.
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Videos
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.VideosResponse'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List a course's videos
+      tags:
+      - videos
   /enrollments:
     get:
       description: Admin only. Newest first. Filter by courseId and/or userId.
@@ -1532,6 +1585,42 @@ paths:
       tags:
       - quizzes
   /lessons/{id}/videos:
+    get:
+      description: Owner sees every video. Students see ready videos of published
+        lessons; users not enrolled see only free ones.
+      parameters:
+      - description: Lesson ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Videos
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.VideosResponse'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Lesson not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List a lesson's videos
+      tags:
+      - videos
     post:
       consumes:
       - application/json
@@ -2270,6 +2359,61 @@ paths:
       summary: Confirm a video upload
       tags:
       - videos
+  /videos/{id}/hls/{file}:
+    get:
+      description: 'Public: the signature in the query (from GET /videos/{id}/stream)
+        is the credential. Returns the .m3u8 with every URI rewritten to a signed
+        URL: child playlists point back here, segments go straight to the CDN. Open
+        to any origin.'
+      parameters:
+      - description: Video ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Playlist file, e.g. manifest.m3u8
+        in: path
+        name: file
+        required: true
+        type: string
+      - description: From stream URL
+        in: query
+        name: URLPrefix
+        required: true
+        type: string
+      - description: From stream URL
+        in: query
+        name: Expires
+        required: true
+        type: string
+      - description: From stream URL
+        in: query
+        name: KeyName
+        required: true
+        type: string
+      - description: From stream URL
+        in: query
+        name: Signature
+        required: true
+        type: string
+      produces:
+      - application/vnd.apple.mpegurl
+      responses:
+        "200":
+          description: Playlist
+          schema:
+            type: string
+        "403":
+          description: Invalid or expired signature
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Video or playlist not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Get a signed HLS playlist
+      tags:
+      - videos
   /videos/{id}/retry:
     post:
       description: Starts a new transcoding job for a video whose status is failed.
@@ -2322,6 +2466,55 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Retry transcoding of a failed video
+      tags:
+      - videos
+  /videos/{id}/stream:
+    get:
+      description: 'Returns a signed HLS manifest URL, valid for 15 minutes, that
+        any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is:
+        every playlist and segment URL inside it is already signed. queryParams is
+        the bare signature. Refetch before expiresAt. Free videos in published courses
+        are open to any logged-in user; everything else needs the course owner or
+        an enrolled student.'
+      parameters:
+      - description: Video ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Signed URL
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.VideoStreamResponse'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Video not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "409":
+          description: Video is not ready yet (owner only)
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: Storage disabled
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Get a signed streaming URL for a video
       tags:
       - videos
 swagger: "2.0"

@@ -304,7 +304,32 @@ Requires `GCS_ENABLE=true`, `GCP_PROJECT_ID`, `TRANSCODER_LOCATION` (e.g. `asia-
 - `GCS_ENABLE=false` → `503`.
 - Restart the server mid-transcode → video still reaches `ready` (same job is polled).
 
-Known limits: videos stuck in `uploading` are not cleaned up (add a bucket lifecycle rule); `duration_sec` stays NULL; student playback is not built yet.
+### Streaming (signed Cloud CDN URLs)
+
+Requires `CDN_DOMAIN`, `CDN_KEY_NAME`, `CDN_SIGNING_KEY`. CDN backend bucket = `GCS_BUCKET_NAME` (stays private). Apply CORS: `gcloud storage buckets update gs://$GCS_BUCKET_NAME --cors-file=cors.json`, then invalidate CDN cache for `/courses/*`.
+
+- `GET /videos/{id}/stream` → `{manifestUrl, queryParams, expiresAt}` (15 min, `Cache-Control: no-store`).
+- `GET /videos/{id}/hls/{file}.m3u8?<signature>` → public (no cookie), any origin. Checks the signature, reads the playlist from the bucket and rewrites every line to a signed URL: child playlists point back at this route, `.ts` segments go straight to the CDN. Bad/expired signature → `403`.
+- Access: free video (`videos.is_free` or `lessons.is_free`) in published course + published lesson → any logged-in user. Else course owner or enrolled student. Students never see non-ready videos or unpublished lessons (`404`). Owner streaming a non-ready video → `409`.
+
+```
+curl -b student.jar $B/videos/$VID/stream
+curl "$manifestUrl"                 # 200 m3u8, every URL inside already signed
+curl "<any URL from that file>"     # 200 (playlist) or 206/200 (segment)
+curl "${manifestUrl%%\?*}"          # no signature → 403
+```
+
+`manifestUrl` plays as-is anywhere: browser address bar, Safari/iPhone, VLC, hls.js with no options, third-party demo players. hls.js:
+
+```js
+const s = await (await fetch(`/api/v1/videos/${id}/stream`, {credentials: "include"})).json().then(r => r.data);
+const hls = new Hls();
+hls.loadSource(s.manifestUrl);
+hls.attachMedia(video);
+// refetch /stream before s.expiresAt or on a 403, then loadSource again at the current time
+```
+
+Known limits: videos stuck in `uploading` are not cleaned up (add a bucket lifecycle rule); `duration_sec` stays NULL; `CDN_DOMAIN` as plain `http://` exposes the signed query on the network, and an `https://` page will block `http://` segments (mixed content), so use HTTPS for both API and CDN in prod.
 
 ## Migrations added
 

@@ -23,6 +23,9 @@ type EnvConfig struct {
 	GCSBucketName      string        `env:"GCS_BUCKET_NAME"`
 	GCPProjectID       string        `env:"GCP_PROJECT_ID"`      // project that runs the Transcoder API
 	TranscoderLocation string        `env:"TRANSCODER_LOCATION"` // Transcoder region, e.g. asia-south1
+	CDNDomain          string        `env:"CDN_DOMAIN"`          // Cloud CDN origin serving the bucket, e.g. https://cdn.example.com
+	CDNKeyName         string        `env:"CDN_KEY_NAME"`        // signed URL key name on the CDN backend bucket
+	CDNSigningKey      string        `env:"CDN_SIGNING_KEY"`     // base64url signed URL key secret
 }
 
 func MustLoad() EnvConfig {
@@ -66,6 +69,18 @@ func MustLoad() EnvConfig {
 	cfg.TranscoderLocation = os.Getenv("TRANSCODER_LOCATION")
 	if cfg.GCSEnabled && cfg.GCPProjectID == "" {
 		log.Fatal("GCP_PROJECT_ID is not set but GCS_ENABLE is true")
+	}
+	cfg.CDNDomain = os.Getenv("CDN_DOMAIN")
+	cfg.CDNKeyName = os.Getenv("CDN_KEY_NAME")
+	cfg.CDNSigningKey = os.Getenv("CDN_SIGNING_KEY")
+	if cfg.GCSEnabled && cfg.CDNDomain == "" {
+		log.Fatal("CDN_DOMAIN is not set but GCS_ENABLE is true")
+	}
+	if cfg.GCSEnabled && cfg.CDNKeyName == "" {
+		log.Fatal("CDN_KEY_NAME is not set but GCS_ENABLE is true")
+	}
+	if cfg.GCSEnabled && cfg.CDNSigningKey == "" {
+		log.Fatal("CDN_SIGNING_KEY is not set but GCS_ENABLE is true")
 	}
 	if cfg.GCSEnabled && cfg.TranscoderLocation == "" {
 		log.Fatal("TRANSCODER_LOCATION is not set but GCS_ENABLE is true")

@@ -6,17 +6,29 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/cdn"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/storage"
 	"github.com/google/uuid"
 )
 
-const maxVideoFileNameChars = 255
+const (
+	maxVideoFileNameChars = 255
+	// streamURLExpiry is short so a leaked URL stops working soon; clients refetch before expiresAt.
+	streamURLExpiry = 15 * time.Minute
+	// maxPlaylistBytes caps an .m3u8 file read from storage; real ones are a few KB.
+	maxPlaylistBytes = 1 << 20
+)
+
+// playlistNamePattern is a playlist file directly inside a video's hls/ folder, e.g. "media-sd.m3u8".
+var playlistNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+\.m3u8$`)
 
 var (
 	// ErrVideoNotFound means the video does not exist, or the user may not see it.
@@ -25,6 +37,10 @@ var (
 	ErrVideoNotAwaitingUpload = errors.New("video is not awaiting upload")
 	// ErrVideoNotFailed means only a failed video can be retried.
 	ErrVideoNotFailed = errors.New("only a failed video can be retried")
+	// ErrVideoNotReady means the owner asked to stream a video that has not finished transcoding.
+	ErrVideoNotReady = errors.New("video is not ready to stream yet")
+	// ErrBadStreamSignature means a playlist request has a missing, tampered or expired signature.
+	ErrBadStreamSignature = errors.New("stream link is invalid or expired")
 	// ErrTranscodeQueueBusy means the video could not be queued for transcoding. The client can retry confirm.
 	ErrTranscodeQueueBusy = errors.New("transcoding queue is busy, try again shortly")
 )
@@ -39,10 +55,11 @@ type VideoService struct {
 	lessonRepo *models.LessonRepository
 	store      storage.VideoStore
 	queue      TranscodeEnqueuer
+	signer     *cdn.Signer // nil when GCS is disabled
 }
 
-func NewVideoService(videoRepo *models.VideoRepository, lessonRepo *models.LessonRepository, store storage.VideoStore, queue TranscodeEnqueuer) *VideoService {
-	return &VideoService{videoRepo: videoRepo, lessonRepo: lessonRepo, store: store, queue: queue}
+func NewVideoService(videoRepo *models.VideoRepository, lessonRepo *models.LessonRepository, store storage.VideoStore, queue TranscodeEnqueuer, signer *cdn.Signer) *VideoService {
+	return &VideoService{videoRepo: videoRepo, lessonRepo: lessonRepo, store: store, queue: queue, signer: signer}
 }
 
 // VideoUpload is a new video row plus the signed URL the browser must PUT the file to.
@@ -193,6 +210,203 @@ func (s *VideoService) RetryTranscode(ctx context.Context, user *models.User, vi
 // GetVideo returns a video to the person who uploaded it, if they still own its course.
 func (s *VideoService) GetVideo(ctx context.Context, user *models.User, videoID string) (*models.Video, error) {
 	return s.ownedVideo(ctx, user, videoID)
+}
+
+// VideoStream is a ready-to-use signed manifest URL. The manifest is served by the API with every
+// playlist and segment URL inside already signed, so any HLS player can open it as-is.
+// QueryParams is the bare signature, for clients that want to build URLs themselves.
+type VideoStream struct {
+	ManifestURL string
+	QueryParams string
+	ExpiresAt   time.Time
+}
+
+// StreamVideo returns a short-lived signed URL for a ready video the user may watch.
+// playlistBase is the API URL that serves playlists, e.g. "http://localhost:3000/api/v1/videos/{id}/hls/".
+func (s *VideoService) StreamVideo(ctx context.Context, user *models.User, videoID, playlistBase string) (*VideoStream, error) {
+	if !uuidPattern.MatchString(videoID) {
+		return nil, ErrVideoNotFound
+	}
+	if s.signer == nil {
+		return nil, ErrStorageDisabled
+	}
+	video, err := s.videoRepo.Get(ctx, videoID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrVideoNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if video.LessonID == "" {
+		return nil, ErrVideoNotFound
+	}
+	lesson, err := s.lessonRepo.GetLesson(ctx, video.LessonID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrVideoNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	isTeacher, freeOnly, err := s.videoAccess(ctx, user, lesson)
+	if err != nil {
+		return nil, notFoundAs(err, ErrVideoNotFound)
+	}
+	if freeOnly && !video.IsFree && !lesson.IsFree {
+		return nil, ErrVideoNotFound
+	}
+	if video.Status != "ready" || video.HLSPrefix == "" {
+		if !isTeacher {
+			return nil, ErrVideoNotFound
+		}
+		return nil, ErrVideoNotReady
+	}
+
+	expires := time.Now().Add(streamURLExpiry)
+	query := s.signer.SignPrefix("/"+video.HLSPrefix, expires)
+	return &VideoStream{
+		ManifestURL: playlistBase + "manifest.m3u8?" + query,
+		QueryParams: query,
+		ExpiresAt:   expires,
+	}, nil
+}
+
+// VideoPlaylist returns one of a ready video's HLS playlists with every URI inside rewritten to a signed URL:
+// child playlists point back at playlistBase (this API), segments straight at the CDN.
+// The signature from StreamVideo is the only credential, so players that do not carry cookies still work.
+func (s *VideoService) VideoPlaylist(ctx context.Context, videoID, fileName, playlistBase string, q url.Values) ([]byte, error) {
+	if !uuidPattern.MatchString(videoID) || !playlistNamePattern.MatchString(fileName) {
+		return nil, ErrVideoNotFound
+	}
+	if s.signer == nil {
+		return nil, ErrStorageDisabled
+	}
+	signedPrefix, query, err := s.signer.Verify(q, time.Now())
+	if err != nil {
+		return nil, ErrBadStreamSignature
+	}
+	video, err := s.videoRepo.Get(ctx, videoID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrVideoNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	// The signature must be for this video's folder, not some other video the caller may watch.
+	if video.Status != "ready" || video.HLSPrefix == "" || signedPrefix != "/"+video.HLSPrefix {
+		return nil, ErrBadStreamSignature
+	}
+
+	data, err := s.store.ReadSmallObject(ctx, video.HLSPrefix+fileName, maxPlaylistBytes)
+	if errors.Is(err, storage.ErrObjectNotFound) {
+		return nil, ErrVideoNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	signURI := func(uri string) string {
+		if strings.Contains(uri, "://") || strings.HasPrefix(uri, "/") || strings.Contains(uri, "..") {
+			return uri // never sign anything outside the video's folder
+		}
+		if playlistNamePattern.MatchString(uri) {
+			return playlistBase + uri + "?" + query
+		}
+		return s.signer.URL(video.HLSPrefix+uri) + "?" + query
+	}
+	return rewritePlaylist(data, signURI), nil
+}
+
+// uriAttrPattern finds URI="..." inside tags such as #EXT-X-MEDIA and #EXT-X-MAP.
+var uriAttrPattern = regexp.MustCompile(`URI="([^"]*)"`)
+
+// rewritePlaylist passes every URI line and URI="..." attribute of an .m3u8 file through signURI.
+func rewritePlaylist(data []byte, signURI func(string) string) []byte {
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "":
+		case strings.HasPrefix(line, "#"):
+			lines[i] = uriAttrPattern.ReplaceAllStringFunc(line, func(m string) string {
+				return `URI="` + signURI(uriAttrPattern.FindStringSubmatch(m)[1]) + `"`
+			})
+		default:
+			lines[i] = signURI(line)
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+// ListLessonVideos lists a lesson's videos. Owners see every status; students only ready videos of published lessons.
+func (s *VideoService) ListLessonVideos(ctx context.Context, user *models.User, lessonID string) ([]models.Video, error) {
+	if !uuidPattern.MatchString(lessonID) {
+		return nil, ErrLessonNotFound
+	}
+	lesson, err := s.lessonRepo.GetLesson(ctx, lessonID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrLessonNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	isTeacher, freeOnly, err := s.videoAccess(ctx, user, lesson)
+	if err != nil {
+		return nil, notFoundAs(err, ErrLessonNotFound)
+	}
+	return s.videoRepo.List(ctx, models.VideoListFilter{
+		CourseID: lesson.CourseID, LessonID: lesson.ID, OnlyReady: !isTeacher, OnlyFree: freeOnly,
+	})
+}
+
+// ListCourseVideos lists every video of a course the user may see, in lesson order.
+func (s *VideoService) ListCourseVideos(ctx context.Context, user *models.User, courseID string) ([]models.Video, error) {
+	isTeacher, freeOnly, err := s.courseAccess(ctx, user, courseID)
+	if err != nil {
+		return nil, notFoundAs(err, ErrCourseNotFound)
+	}
+	return s.videoRepo.List(ctx, models.VideoListFilter{
+		CourseID: courseID, OnlyReady: !isTeacher, OnlyFree: freeOnly,
+	})
+}
+
+// courseAccess is authorizeCourse with a fallback: users who may not read the whole course can still
+// see its free content when the course is published (freeOnly).
+func (s *VideoService) courseAccess(ctx context.Context, user *models.User, courseID string) (isTeacher, freeOnly bool, err error) {
+	isTeacher, err = authorizeCourse(ctx, s.lessonRepo, user, courseID)
+	if err == nil {
+		return isTeacher, false, nil
+	}
+	if !errors.Is(err, ErrForbidden) {
+		return false, false, err
+	}
+	published, perr := s.lessonRepo.IsCoursePublished(ctx, courseID)
+	if perr != nil {
+		return false, false, perr
+	}
+	if !published {
+		return false, false, ErrCourseNotFound
+	}
+	return false, true, nil
+}
+
+// videoAccess decides how a user may see a lesson's videos. Non-owners never see unpublished lessons.
+func (s *VideoService) videoAccess(ctx context.Context, user *models.User, lesson *models.Lesson) (isTeacher, freeOnly bool, err error) {
+	isTeacher, freeOnly, err = s.courseAccess(ctx, user, lesson.CourseID)
+	if err != nil {
+		return false, false, err
+	}
+	if !isTeacher && !lesson.IsPublished {
+		return false, false, ErrLessonNotFound
+	}
+	return isTeacher, freeOnly, nil
+}
+
+// notFoundAs maps "may not see it" errors to the caller's not-found error.
+func notFoundAs(err, notFound error) error {
+	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) || errors.Is(err, ErrLessonNotFound) {
+		return notFound
+	}
+	return err
 }
 
 // ownedVideo loads a video the user uploaded to a course they own. Anything else looks like a missing video.

@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -50,6 +51,17 @@ func (r *LessonRepository) CourseAccess(ctx context.Context, courseID, userID st
 
 	err = r.db.QueryRowContext(ctx, query, courseID, userID).Scan(&isInstructor, &isEnrolled)
 	return isInstructor, isEnrolled, err
+}
+
+// IsCoursePublished reports whether the course exists, is not deleted and is published.
+func (r *LessonRepository) IsCoursePublished(ctx context.Context, courseID string) (bool, error) {
+	var ok bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT status = 'published' FROM courses WHERE id = $1 AND deleted_at IS NULL`, courseID).Scan(&ok)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return ok, err
 }
 
 // CreateLesson saves a new lesson at the end of the course and fills in the generated fields.
