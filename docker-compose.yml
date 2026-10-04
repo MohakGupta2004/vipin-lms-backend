@@ -37,6 +37,8 @@ services:
       REFRESH_TOKEN_EXPIRY: ${REFRESH_TOKEN_EXPIRY:-7}
       REFRESH_SECRET_KEY: ${REFRESH_SECRET_KEY:-your_refresh_secret_key_here}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3001}
+      # true when the frontend runs on another site than the API; requires HTTPS on the API.
+      COOKIE_CROSS_SITE: ${COOKIE_CROSS_SITE:-false}
       # PDF uploads work only when GCS_ENABLE=true; otherwise the credentials below are not used.
       GCS_ENABLE: ${GCS_ENABLE:-false}
       GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-vipin-lms}

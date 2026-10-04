@@ -91,7 +91,7 @@ func main() {
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
 
 	// handlerFunctions
-	authHandler := handlers.NewAuthHandler(userRepo, authService)
+	authHandler := handlers.NewAuthHandler(userRepo, authService, cfg.CrossSiteCookies)
 	postHandler := handlers.NewPostHandler(postService)
 	courseHandler := handlers.NewCourseHandler(courseService)
 	examHandler := handlers.NewExamHandler(examRepo)

@@ -19,7 +19,8 @@ type EnvConfig struct {
 	RefreshTokenExpiry time.Duration `env:"REFRESH_TOKEN_EXPIRY"`
 	RefreshSecretKey   string        `env:"REFRESH_SECRET_KEY"`
 	CORSAllowedOrigins []string      `env:"CORS_ALLOWED_ORIGINS"`
-	GCSEnabled         bool          `env:"GCS_ENABLE"` // PDF uploads work only when true
+	CrossSiteCookies   bool          `env:"COOKIE_CROSS_SITE"` // true when the frontend is on another site than the API (needs HTTPS)
+	GCSEnabled         bool          `env:"GCS_ENABLE"`        // PDF uploads work only when true
 	GCSBucketName      string        `env:"GCS_BUCKET_NAME"`
 }
 
@@ -55,6 +56,7 @@ func MustLoad() EnvConfig {
 		origins = "http://localhost:3001"
 	}
 	cfg.CORSAllowedOrigins = strings.Split(origins, ",")
+	cfg.CrossSiteCookies = strings.EqualFold(strings.TrimSpace(os.Getenv("COOKIE_CROSS_SITE")), "true")
 	cfg.GCSEnabled = strings.EqualFold(strings.TrimSpace(os.Getenv("GCS_ENABLE")), "true")
 	cfg.GCSBucketName = os.Getenv("GCS_BUCKET_NAME")
 	if cfg.GCSBucketName == "" {

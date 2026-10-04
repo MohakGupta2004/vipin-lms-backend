@@ -26,12 +26,15 @@ type LoginRequest struct {
 type AuthHandler struct {
 	userRepo    *models.UserRepository
 	authService *service.AuthService
+	// crossSiteCookies sends auth cookies as SameSite=None; Secure so a frontend on another site can use them.
+	crossSiteCookies bool
 }
 
-func NewAuthHandler(userRepo *models.UserRepository, authService *service.AuthService) *AuthHandler {
+func NewAuthHandler(userRepo *models.UserRepository, authService *service.AuthService, crossSiteCookies bool) *AuthHandler {
 	return &AuthHandler{
-		userRepo:    userRepo,
-		authService: authService,
+		userRepo:         userRepo,
+		authService:      authService,
+		crossSiteCookies: crossSiteCookies,
 	}
 }
 
@@ -64,7 +67,7 @@ func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJSONResponse(w, http.StatusConflict, err.Error())
 		return
 	}
-	setAuthCookies(w, token, refresh)
+	h.setAuthCookies(w, token, refresh)
 	utils.WriteJSONResponse(w, http.StatusCreated, user)
 }
 
@@ -98,7 +101,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	setAuthCookies(w, token, refresh)
+	h.setAuthCookies(w, token, refresh)
 	utils.WriteJSONResponse(w, http.StatusOK, user)
 }
 
@@ -155,7 +158,7 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 		utils.WriteJSONResponse(w, http.StatusInternalServerError, "failed to generate new tokens")
 		return
 	}
-	setAuthCookies(w, newAccessToken, newRefreshToken)
+	h.setAuthCookies(w, newAccessToken, newRefreshToken)
 	utils.WriteJSONResponse(w, http.StatusAccepted, "access token updated successfully")
 }
 
@@ -187,60 +190,53 @@ func (h *AuthHandler) MeHandler(w http.ResponseWriter, r *http.Request) {
 //	@Success		200	{object}	utils.JSONResponse{data=string}	"Logged out"
 //	@Router			/auth/logout [post]
 func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
-	clearAuthCookies(w)
+	h.clearAuthCookies(w)
 	utils.WriteJSONResponse(w, http.StatusOK, "logged out")
 }
 
 // clearAuthCookies tells the browser to drop both auth cookies right away.
 // Name, Path and attributes must match setAuthCookies or the browser keeps the originals.
-func clearAuthCookies(w http.ResponseWriter) {
-	expireLegacyAuthCookies(w)
+func (h *AuthHandler) clearAuthCookies(w http.ResponseWriter) {
+	h.expireLegacyAuthCookies(w)
 	for _, name := range []string{"access_token", "refresh_token"} {
-		http.SetCookie(w, &http.Cookie{
-			Name:     name,
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1, // sent as Max-Age=0: expire now
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-		})
+		http.SetCookie(w, h.authCookie(name, "", "/", -1)) // -1 is sent as Max-Age=0: expire now
 	}
 }
 
 // setAuthCookies stores both tokens as HttpOnly cookies.
 // Path "/" makes the browser send them to every API route, not only /auth.
-func setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string) {
-	expireLegacyAuthCookies(w)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "access_token",
-		Value:    accessToken,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    refreshToken,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+func (h *AuthHandler) setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string) {
+	h.expireLegacyAuthCookies(w)
+	http.SetCookie(w, h.authCookie("access_token", accessToken, "/", 0))
+	http.SetCookie(w, h.authCookie("refresh_token", refreshToken, "/", 0))
 }
 
 // expireLegacyAuthCookies drops auth cookies that earlier versions stored under a narrower Path.
 // Browsers send the most specific path first and Go's r.Cookie returns the first match,
 // so a stale cookie there would shadow the fresh Path=/ one and cause 401s after every reload.
-func expireLegacyAuthCookies(w http.ResponseWriter) {
+func (h *AuthHandler) expireLegacyAuthCookies(w http.ResponseWriter) {
 	for _, path := range []string{"/api", "/api/v1", "/api/v1/auth"} {
 		for _, name := range []string{"access_token", "refresh_token"} {
-			http.SetCookie(w, &http.Cookie{
-				Name:     name,
-				Value:    "",
-				Path:     path,
-				MaxAge:   -1,
-				HttpOnly: true,
-				SameSite: http.SameSiteLaxMode,
-			})
+			http.SetCookie(w, h.authCookie(name, "", path, -1))
 		}
 	}
+}
+
+// authCookie builds an HttpOnly auth cookie with the SameSite policy for this deployment.
+// Lax cookies are never sent on cross-site fetches, so a frontend on another site
+// (e.g. localhost against the production API) needs SameSite=None, which browsers accept only with Secure.
+func (h *AuthHandler) authCookie(name, value, path string, maxAge int) *http.Cookie {
+	c := &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     path,
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
+	if h.crossSiteCookies {
+		c.SameSite = http.SameSiteNoneMode
+		c.Secure = true
+	}
+	return c
 }
