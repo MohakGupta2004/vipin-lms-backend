@@ -194,6 +194,7 @@ func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 // clearAuthCookies tells the browser to drop both auth cookies right away.
 // Name, Path and attributes must match setAuthCookies or the browser keeps the originals.
 func clearAuthCookies(w http.ResponseWriter) {
+	expireLegacyAuthCookies(w)
 	for _, name := range []string{"access_token", "refresh_token"} {
 		http.SetCookie(w, &http.Cookie{
 			Name:     name,
@@ -209,6 +210,7 @@ func clearAuthCookies(w http.ResponseWriter) {
 // setAuthCookies stores both tokens as HttpOnly cookies.
 // Path "/" makes the browser send them to every API route, not only /auth.
 func setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string) {
+	expireLegacyAuthCookies(w)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "access_token",
 		Value:    accessToken,
@@ -223,4 +225,22 @@ func setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// expireLegacyAuthCookies drops auth cookies that earlier versions stored under a narrower Path.
+// Browsers send the most specific path first and Go's r.Cookie returns the first match,
+// so a stale cookie there would shadow the fresh Path=/ one and cause 401s after every reload.
+func expireLegacyAuthCookies(w http.ResponseWriter) {
+	for _, path := range []string{"/api", "/api/v1", "/api/v1/auth"} {
+		for _, name := range []string{"access_token", "refresh_token"} {
+			http.SetCookie(w, &http.Cookie{
+				Name:     name,
+				Value:    "",
+				Path:     path,
+				MaxAge:   -1,
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+		}
+	}
 }
