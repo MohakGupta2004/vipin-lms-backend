@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/lib/utils"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/middleware"
@@ -119,18 +120,20 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	tokenCookie, err := r.Cookie("refresh_token")
-	if err != nil {
+	values := utils.CookieValues(r, "refresh_token")
+	if len(values) == 0 {
 		utils.WriteJSONResponse(w, http.StatusBadRequest, "missing refresh token")
 		return
 	}
 
-	if tokenCookie.Value == "" {
-		utils.WriteJSONResponse(w, http.StatusBadRequest, "missing refresh token")
-		return
+	// Use the first refresh_token that validates; the client may also send stale ones.
+	var token *jwt.Token
+	var err error
+	for _, value := range values {
+		if token, err = h.authService.ValidateRefreshToken(value); err == nil {
+			break
+		}
 	}
-
-	token, err := h.authService.ValidateRefreshToken(tokenCookie.Value)
 	if err != nil {
 		utils.WriteJSONResponse(w, http.StatusBadRequest, err.Error())
 		return
@@ -197,42 +200,33 @@ func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 // clearAuthCookies tells the browser to drop both auth cookies right away.
 // Name, Path and attributes must match setAuthCookies or the browser keeps the originals.
 func (h *AuthHandler) clearAuthCookies(w http.ResponseWriter) {
-	h.expireLegacyAuthCookies(w)
 	for _, name := range []string{"access_token", "refresh_token"} {
-		http.SetCookie(w, h.authCookie(name, "", "/", -1)) // -1 is sent as Max-Age=0: expire now
+		http.SetCookie(w, h.authCookie(name, "", -1)) // -1 is sent as Max-Age=0: expire now
 	}
 }
 
 // setAuthCookies stores both tokens as HttpOnly cookies.
 // Path "/" makes the browser send them to every API route, not only /auth.
 func (h *AuthHandler) setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string) {
-	h.expireLegacyAuthCookies(w)
-	http.SetCookie(w, h.authCookie("access_token", accessToken, "/", 0))
-	http.SetCookie(w, h.authCookie("refresh_token", refreshToken, "/", 0))
-}
-
-// expireLegacyAuthCookies drops auth cookies that earlier versions stored under a narrower Path.
-// Browsers send the most specific path first and Go's r.Cookie returns the first match,
-// so a stale cookie there would shadow the fresh Path=/ one and cause 401s after every reload.
-func (h *AuthHandler) expireLegacyAuthCookies(w http.ResponseWriter) {
-	for _, path := range []string{"/api", "/api/v1", "/api/v1/auth"} {
-		for _, name := range []string{"access_token", "refresh_token"} {
-			http.SetCookie(w, h.authCookie(name, "", path, -1))
-		}
-	}
+	http.SetCookie(w, h.authCookie("access_token", accessToken, 0))
+	http.SetCookie(w, h.authCookie("refresh_token", refreshToken, 0))
 }
 
 // authCookie builds an HttpOnly auth cookie with the SameSite policy for this deployment.
 // Lax cookies are never sent on cross-site fetches, so a frontend on another site
 // (e.g. localhost against the production API) needs SameSite=None, which browsers accept only with Secure.
-func (h *AuthHandler) authCookie(name, value, path string, maxAge int) *http.Cookie {
+func (h *AuthHandler) authCookie(name, value string, maxAge int) *http.Cookie {
 	c := &http.Cookie{
 		Name:     name,
 		Value:    value,
-		Path:     path,
+		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+	}
+	if maxAge < 0 {
+		// Expires in the past as well as Max-Age=0, for clients that ignore Max-Age.
+		c.Expires = time.Unix(0, 0)
 	}
 	if h.crossSiteCookies {
 		c.SameSite = http.SameSiteNoneMode

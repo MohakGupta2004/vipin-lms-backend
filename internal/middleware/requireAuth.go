@@ -33,14 +33,15 @@ func NewAuthMiddleware(secretKey string, authService *service.AuthService, userR
 // and stores it in the request context. Handlers read it with UserFromContext.
 func (am *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("access_token")
-		if err != nil || cookie.Value == "" {
-			utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
-			return
+		// Use the first access_token that validates; the client may also send stale or empty ones.
+		var token *jwt.Token
+		for _, value := range utils.CookieValues(r, "access_token") {
+			if t, err := am.AuthService.ValidateToken(value); err == nil && t.Valid {
+				token = t
+				break
+			}
 		}
-
-		token, err := am.AuthService.ValidateToken(cookie.Value)
-		if err != nil || !token.Valid {
+		if token == nil {
 			utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
 			return
 		}

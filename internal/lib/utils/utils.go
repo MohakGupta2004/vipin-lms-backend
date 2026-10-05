@@ -24,3 +24,17 @@ func WriteJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) 
 	}
 	json.NewEncoder(w).Encode(response)
 }
+
+// CookieValues returns every non-empty value the request carries for the named cookie.
+// A client can hold several cookies with the same name under different paths
+// (stale ones from older versions, or empty ones left behind by a delete),
+// and r.Cookie returns only the first, which may not be the valid one.
+func CookieValues(r *http.Request, name string) []string {
+	var values []string
+	for _, c := range r.CookiesNamed(name) {
+		if c.Value != "" {
+			values = append(values, c.Value)
+		}
+	}
+	return values
+}
