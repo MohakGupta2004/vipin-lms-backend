@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/cdn"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/config"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/database"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/handlers"
@@ -19,6 +20,7 @@ import (
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/service"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/storage"
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/transcoder"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "github.com/MohakGupta2004/vipin-lms-backend/docs"
@@ -64,6 +66,25 @@ func main() {
 		fmt.Println("GCS STORAGE DISABLED (set GCS_ENABLE=true to enable PDF uploads)")
 	}
 
+	// Video storage and transcoding follow the same switch.
+	var videoStore storage.VideoStore = storage.DisabledVideoStore{}
+	var transcodeClient *transcoder.Client
+	var cdnSigner *cdn.Signer
+	if cfg.GCSEnabled {
+		cdnSigner, err = cdn.NewSigner(cfg.CDNDomain, cfg.CDNKeyName, cfg.CDNSigningKey)
+		if err != nil {
+			panic(err)
+		}
+		videoStore, err = storage.NewGCSVideoStore(ctx, cfg.GCSBucketName)
+		if err != nil {
+			panic(err)
+		}
+		transcodeClient, err = transcoder.New(ctx, cfg.GCPProjectID, cfg.TranscoderLocation)
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	mux := http.NewServeMux()
 
 	// repositories
@@ -75,6 +96,7 @@ func main() {
 	lessonRepo := models.NewLessonRepository(db)
 	noteRepo := models.NewNoteRepository(db)
 	quizRepo := models.NewQuizRepository(db)
+	videoRepo := models.NewVideoRepository(db)
 
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
@@ -86,6 +108,18 @@ func main() {
 	noteService := service.NewNoteService(noteRepo, lessonRepo, pdfStore)
 	quizService := service.NewQuizService(quizRepo, lessonRepo)
 	userService := service.NewUserService(userRepo)
+
+	// transcoding runs on an in-process queue; it stays unused (and nothing is enqueued) when GCS is disabled
+	var transcodeQueue *service.TranscodeQueue
+	if transcodeClient != nil {
+		transcodeQueue = service.NewTranscodeQueue(videoRepo, videoStore, transcodeClient)
+		transcodeQueue.Start(ctx)
+	}
+	var videoEnqueuer service.TranscodeEnqueuer = disabledEnqueuer{}
+	if transcodeQueue != nil {
+		videoEnqueuer = transcodeQueue
+	}
+	videoService := service.NewVideoService(videoRepo, lessonRepo, videoStore, videoEnqueuer, cdnSigner)
 
 	// middlewares
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
@@ -100,6 +134,7 @@ func main() {
 	noteHandler := handlers.NewNoteHandler(noteService)
 	quizHandler := handlers.NewQuizHandler(quizService)
 	userHandler := handlers.NewUserHandler(userService)
+	videoHandler := handlers.NewVideoHandler(videoService)
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
@@ -147,6 +182,18 @@ func main() {
 	mux.Handle("GET /api/v1/notes/{id}/file", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DownloadNote)))
 	mux.Handle("DELETE /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DeleteNote)))
 
+	// lesson videos (course owner uploads straight to the bucket, confirms, then polls until transcoded)
+	mux.Handle("POST /api/v1/lessons/{id}/videos", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.RequestUpload)))
+	mux.Handle("POST /api/v1/videos/{id}/confirm", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.ConfirmUpload)))
+	mux.Handle("POST /api/v1/videos/{id}/retry", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.RetryTranscode)))
+	mux.Handle("GET /api/v1/videos/{id}", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.GetVideo)))
+	// playback: signed CDN URL + video lists for owners and students
+	mux.Handle("GET /api/v1/videos/{id}/stream", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.StreamVideo)))
+	mux.Handle("PUT /api/v1/videos/{id}/progress", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.SaveVideoProgress)))
+	mux.HandleFunc("GET /api/v1/videos/{id}/hls/{file}", videoHandler.VideoPlaylist) // no auth: the signed query is the credential
+	mux.Handle("GET /api/v1/lessons/{id}/videos", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.ListLessonVideos)))
+	mux.Handle("GET /api/v1/courses/{id}/videos", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.ListCourseVideos)))
+
 	// quizzes on lessons (course owner creates and edits; enrolled students take them)
 	mux.Handle("POST /api/v1/lessons/{id}/quizzes", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.CreateQuiz)))
 	mux.Handle("GET /api/v1/lessons/{id}/quizzes", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.ListQuizzes)))
@@ -183,9 +230,26 @@ func main() {
 		logger.Error("server shutdown failed", "err", err)
 	}
 
+	// ctx is already cancelled, so the transcode workers are stopping; wait for them before closing the DB
+	if transcodeQueue != nil {
+		transcodeQueue.Wait()
+	}
+	if transcodeClient != nil {
+		if err := transcodeClient.Close(); err != nil {
+			logger.Error("closing transcoder client failed", "err", err)
+		}
+	}
+	if err := videoStore.Close(); err != nil {
+		logger.Error("closing video storage client failed", "err", err)
+	}
 	if err := pdfStore.Close(); err != nil {
 		logger.Error("closing storage client failed", "err", err)
 	}
 	db.Close()
 	logger.Info("bye")
 }
+
+// disabledEnqueuer is used when GCS is off. Uploads are refused earlier, so it is never reached.
+type disabledEnqueuer struct{}
+
+func (disabledEnqueuer) Enqueue(context.Context, string) error { return storage.ErrStorageDisabled }

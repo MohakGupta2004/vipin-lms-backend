@@ -42,6 +42,9 @@ services:
       # PDF uploads work only when GCS_ENABLE=true; otherwise the credentials below are not used.
       GCS_ENABLE: ${GCS_ENABLE:-false}
       GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-vipin-lms}
+      # Required when GCS_ENABLE=true (video transcoding)
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      TRANSCODER_LOCATION: ${TRANSCODER_LOCATION:-}
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     depends_on:

@@ -198,20 +198,25 @@ func (s *LessonService) DeleteLesson(ctx context.Context, user *models.User, les
 
 // ownedLesson loads a lesson of a course the user owns. Anything else looks like a missing lesson.
 func (s *LessonService) ownedLesson(ctx context.Context, user *models.User, lessonID string) (*models.Lesson, error) {
+	return loadOwnedLesson(ctx, s.lessonRepo, user, lessonID)
+}
+
+// loadOwnedLesson loads a lesson of a course the user owns. Anything else looks like a missing lesson.
+func loadOwnedLesson(ctx context.Context, repo *models.LessonRepository, user *models.User, lessonID string) (*models.Lesson, error) {
 	if !user.CanTeach() {
 		return nil, ErrForbidden
 	}
 	if !uuidPattern.MatchString(lessonID) {
 		return nil, ErrLessonNotFound
 	}
-	lesson, err := s.lessonRepo.GetLesson(ctx, lessonID)
+	lesson, err := repo.GetLesson(ctx, lessonID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrLessonNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := requireTeacher(ctx, s.lessonRepo, user, lesson.CourseID); err != nil {
+	if err := requireTeacher(ctx, repo, user, lesson.CourseID); err != nil {
 		if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) {
 			return nil, ErrLessonNotFound
 		}

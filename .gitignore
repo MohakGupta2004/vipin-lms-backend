@@ -34,3 +34,7 @@ bin/
 # GCP service-account keys
 *-key.json
 gcp-*.json
+
+# local secrets and air build output
+key.txt
+tmp/
