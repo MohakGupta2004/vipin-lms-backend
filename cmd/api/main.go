@@ -180,6 +180,7 @@ func main() {
 	mux.Handle("DELETE /api/v1/courses/{id}", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.DeleteCourse)))
 	mux.Handle("PATCH /api/v1/courses/{id}/status", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.UpdateCourseStatus)))
 	mux.Handle("GET /api/v1/me/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.ListMyCourses)))
+	mux.Handle("GET /api/v1/catalog/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.ListCatalog)))
 
 	// exam routes (any logged-in user)
 	mux.Handle("GET /api/v1/exams", authMiddleware.RequireAuth(http.HandlerFunc(examHandler.ListExams)))

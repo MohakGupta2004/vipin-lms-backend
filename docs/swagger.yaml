@@ -292,8 +292,57 @@ definitions:
         description: nil = skipped
         type: string
     type: object
+  models.CatalogCourse:
+    properties:
+      access:
+        description: |-
+          Access is only filled in by GET /courses/{id}: "owner", "full" (enrolled, or the course is free)
+          or "preview" (published course, not enrolled: free content only).
+        type: string
+      createdAt:
+        type: string
+      description:
+        type: string
+      enrolled:
+        type: boolean
+      examId:
+        type: string
+      freeLessonCount:
+        type: integer
+      freeNoteCount:
+        type: integer
+      freeQuizCount:
+        type: integer
+      freeVideoCount:
+        type: integer
+      id:
+        type: string
+      instructorId:
+        type: string
+      instructorName:
+        type: string
+      isFree:
+        type: boolean
+      lessonCount:
+        type: integer
+      shortDescription:
+        type: string
+      slug:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+      videoCount:
+        type: integer
+    type: object
   models.Course:
     properties:
+      access:
+        description: |-
+          Access is only filled in by GET /courses/{id}: "owner", "full" (enrolled, or the course is free)
+          or "preview" (published course, not enrolled: free content only).
+        type: string
       createdAt:
         type: string
       description:
@@ -360,6 +409,11 @@ definitions:
         type: boolean
       lessonType:
         type: string
+      locked:
+        description: |-
+          Locked is set for users previewing a course they are not enrolled in: the lesson's notes,
+          quizzes and videos stay closed unless they are free on their own.
+        type: boolean
       notes:
         items:
           $ref: '#/definitions/models.Note'
@@ -550,6 +604,10 @@ definitions:
         type: boolean
       lessonId:
         type: string
+      locked:
+        description: 'Locked is set for users previewing a course: they see the title
+          but cannot stream it.'
+        type: boolean
       sizeBytes:
         type: integer
       status:
@@ -862,6 +920,54 @@ paths:
       summary: Verify a one-time code
       tags:
       - auth
+  /catalog/courses:
+    get:
+      description: Any logged-in user. Every published course, newest first, with
+        the instructor's name, whether the user is enrolled, and counts of what a
+        user who is not enrolled can open for free (in a free course everything is
+        free).
+      parameters:
+      - description: Only courses with free content
+        in: query
+        name: freeOnly
+        type: boolean
+      - description: Max courses to return (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Number of courses to skip (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Courses
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.CatalogCourse'
+                  type: array
+              type: object
+        "400":
+          description: Invalid limit or offset
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Browse published courses
+      tags:
+      - courses
   /courses:
     get:
       description: Admin only. Returns all courses that are not deleted, newest first.
@@ -997,9 +1103,11 @@ paths:
       tags:
       - courses
     get:
-      description: Admins can read any course and owners their own (drafts included).
-        A student can read a published course they have a valid enrollment in. Everyone
-        else gets 404.
+      description: 'Admins can read any course and owners their own (drafts included).
+        Any other logged-in user can read a published course. access tells what they
+        may open: "owner", "full" (valid enrollment, or the course is free) or "preview"
+        (only free lessons, notes, quizzes and videos). Unpublished courses are 404
+        for everyone else.'
       parameters:
       - description: Course ID
         in: path
@@ -1092,8 +1200,10 @@ paths:
   /courses/{id}/lessons:
     get:
       description: Returns the course's lessons (chapters) in order, each with its
-        PDF notes. Only the course instructor and enrolled students can see it. Students
-        see published lessons only.
+        PDF notes. The course instructor and enrolled students (or anyone, for a free
+        course) see it in full; students see published lessons only. Other logged-in
+        users previewing a published course get every published lesson, with notes
+        only on free lessons and locked=true on the rest.
       parameters:
       - description: Course ID
         in: path
@@ -1189,8 +1299,9 @@ paths:
   /courses/{id}/notes:
     get:
       description: Returns the PDF notes of a course, newest first, optionally for
-        one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. Only
-        the course instructor and enrolled students can see them.
+        one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. The
+        course instructor and enrolled students see all of them; users previewing
+        a published course only the notes of free lessons.
       parameters:
       - description: Course ID
         in: path
@@ -1302,7 +1413,8 @@ paths:
   /courses/{id}/videos:
     get:
       description: Owner sees every video. Students see ready videos of published
-        lessons; users not enrolled see only free ones.
+        lessons. Users previewing a published course they are not enrolled in see
+        them too, with locked=true on the ones they cannot stream.
       parameters:
       - description: Course ID
         in: path
@@ -1682,9 +1794,10 @@ paths:
       - notes
   /lessons/{id}/quizzes:
     get:
-      description: Returns the quizzes of a lesson without their questions. Only the
-        course instructor and enrolled students can see them. Students see published
-        quizzes only.
+      description: Returns the quizzes of a lesson without their questions. The course
+        instructor and enrolled students can see them; students see published quizzes
+        only. Users previewing a published course only see free quizzes, or every
+        quiz of a free lesson.
       parameters:
       - description: Lesson ID
         in: path
@@ -1781,7 +1894,8 @@ paths:
   /lessons/{id}/videos:
     get:
       description: Owner sees every video. Students see ready videos of published
-        lessons; users not enrolled see only free ones.
+        lessons. Users previewing a published course they are not enrolled in see
+        them too, with locked=true on the ones they cannot stream.
       parameters:
       - description: Lesson ID
         in: path
@@ -1962,8 +2076,8 @@ paths:
       - notes
   /notes/{id}/file:
     get:
-      description: Streams the PDF. Only the course instructor and enrolled students
-        can download it.
+      description: Streams the PDF. The course instructor and enrolled students can
+        download it; users previewing a published course only if its lesson is free.
       parameters:
       - description: Note ID
         in: path
@@ -2721,9 +2835,10 @@ paths:
       description: 'Returns a signed HLS manifest URL, valid for 15 minutes, that
         any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is:
         every playlist and segment URL inside it is already signed. queryParams is
-        the bare signature. Refetch before expiresAt. Free videos in published courses
-        are open to any logged-in user; everything else needs the course owner or
-        an enrolled student.'
+        the bare signature. Refetch before expiresAt. Free videos (or videos of free
+        lessons) in published courses, and every video of a free course, are open
+        to any logged-in user; everything else needs the course owner or an enrolled
+        student.'
       parameters:
       - description: Video ID
         in: path

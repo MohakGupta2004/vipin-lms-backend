@@ -257,7 +257,7 @@ func (h *QuizHandler) UpdateQuizStatus(w http.ResponseWriter, r *http.Request) {
 // ListQuizzes godoc
 //
 //	@Summary		List a lesson's quizzes
-//	@Description	Returns the quizzes of a lesson without their questions. Only the course instructor and enrolled students can see them. Students see published quizzes only.
+//	@Description	Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users previewing a published course only see free quizzes, or every quiz of a free lesson.
 //	@Tags			quizzes
 //	@Produce		json
 //	@Param			id	path		string									true	"Lesson ID"

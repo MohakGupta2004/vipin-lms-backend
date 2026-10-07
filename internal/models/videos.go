@@ -23,6 +23,8 @@ type Video struct {
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 	UploadedBy string    `json:"-"`
+	// Locked is set for users previewing a course: they see the title but cannot stream it.
+	Locked bool `json:"locked,omitempty"`
 
 	OriginalKey  string `json:"-"`
 	TranscodeJob string `json:"-"`
@@ -71,7 +73,6 @@ type VideoListFilter struct {
 	CourseID  string
 	LessonID  string // empty = whole course
 	OnlyReady bool   // students: ready videos of published lessons
-	OnlyFree  bool   // not enrolled: free videos or videos of free lessons
 }
 
 // List returns a course's videos in lesson order. Videos of deleted lessons are left out.
@@ -80,13 +81,12 @@ func (r *VideoRepository) List(ctx context.Context, f VideoListFilter) ([]Video,
 		WHERE v.course_id = $1
 		  AND ($2::uuid IS NULL OR v.lesson_id = $2::uuid)
 		  AND (NOT $3 OR (v.status = 'ready' AND l.is_published))
-		  AND (NOT $4 OR v.is_free OR l.is_free)
 		ORDER BY l.position, v.created_at`
 	var lessonID any
 	if f.LessonID != "" {
 		lessonID = f.LessonID
 	}
-	rows, err := r.db.QueryContext(ctx, query, f.CourseID, lessonID, f.OnlyReady, f.OnlyFree)
+	rows, err := r.db.QueryContext(ctx, query, f.CourseID, lessonID, f.OnlyReady)
 	if err != nil {
 		return nil, err
 	}

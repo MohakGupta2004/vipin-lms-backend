@@ -47,24 +47,45 @@ type UpdateLessonInput struct {
 	IsPublished *bool
 }
 
-// authorizeCourse checks that the user may read a course's content: its owner (the instructor or admin
-// whose id is the course's instructor_id) or a user with a valid enrollment. isTeacher is true for the owner.
+// authorizeCourse checks that the user may read all of a course's content: its owner (the instructor or
+// admin whose id is the course's instructor_id), a user with a valid enrollment, or any logged-in user
+// when the published course is free. isTeacher is true for the owner.
 func authorizeCourse(ctx context.Context, repo *models.LessonRepository, user *models.User, courseID string) (isTeacher bool, err error) {
-	if !uuidPattern.MatchString(courseID) {
-		return false, ErrCourseNotFound
-	}
-	teaches, enrolled, err := repo.CourseAccess(ctx, courseID, user.ID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, ErrCourseNotFound
-	}
+	isTeacher, preview, err := authorizePreview(ctx, repo, user, courseID)
 	if err != nil {
 		return false, err
 	}
-	isTeacher = teaches && user.CanTeach()
-	if !isTeacher && !enrolled {
+	if preview {
 		return false, ErrForbidden
 	}
 	return isTeacher, nil
+}
+
+// authorizePreview is authorizeCourse with a fallback: a user who may not read the whole course can
+// still preview it (preview = true) when it is published. Previewers only get free content: free
+// lessons with their notes, quizzes and videos, plus free quizzes and videos in other lessons.
+func authorizePreview(ctx context.Context, repo *models.LessonRepository, user *models.User, courseID string) (isTeacher, preview bool, err error) {
+	if !uuidPattern.MatchString(courseID) {
+		return false, false, ErrCourseNotFound
+	}
+	access, err := repo.CourseAccess(ctx, courseID, user.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, ErrCourseNotFound
+	}
+	if err != nil {
+		return false, false, err
+	}
+	isTeacher = access.IsInstructor && user.CanTeach()
+	switch {
+	case isTeacher || access.IsEnrolled:
+		return isTeacher, false, nil
+	case access.Published && access.Free:
+		return false, false, nil // a free course is open to every logged-in user
+	case access.Published:
+		return false, true, nil
+	default:
+		return false, false, ErrForbidden
+	}
 }
 
 // requireTeacher is like authorizeCourse but only the course's owner passes.
@@ -106,9 +127,11 @@ func (s *LessonService) CreateLesson(ctx context.Context, user *models.User, cou
 }
 
 // ListLessons returns the course's lessons in order, each with its PDF notes.
-// Students only see published lessons; the instructor sees everything.
+// Students only see published lessons; the instructor sees everything. Users previewing a course
+// they are not enrolled in see every published lesson, but only free lessons carry notes; the rest
+// come back with locked set.
 func (s *LessonService) ListLessons(ctx context.Context, user *models.User, courseID string) ([]models.Lesson, error) {
-	isTeacher, err := authorizeCourse(ctx, s.lessonRepo, user, courseID)
+	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, courseID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +140,7 @@ func (s *LessonService) ListLessons(ctx context.Context, user *models.User, cour
 	if err != nil {
 		return nil, err
 	}
-	notes, err := s.noteRepo.ListByCourse(ctx, courseID, "", isTeacher, 0, 0)
+	notes, err := s.noteRepo.ListByCourse(ctx, courseID, "", isTeacher, preview, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +151,7 @@ func (s *LessonService) ListLessons(ctx context.Context, user *models.User, cour
 	}
 	for i := range lessons {
 		lessons[i].Notes = notesByLesson[lessons[i].ID]
+		lessons[i].Locked = preview && !lessons[i].IsFree
 	}
 	return lessons, nil
 }

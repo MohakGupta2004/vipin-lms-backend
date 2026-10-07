@@ -110,17 +110,18 @@ func (s *NoteService) UploadNote(ctx context.Context, user *models.User, lessonI
 	return note, nil
 }
 
-// ListNotes returns a course's PDF notes for its instructor or an enrolled student.
+// ListNotes returns a course's PDF notes for its instructor or an enrolled student. Users previewing
+// the course only get the notes of free lessons.
 // lessonID narrows the list to one lesson; empty means the whole course.
 func (s *NoteService) ListNotes(ctx context.Context, user *models.User, courseID, lessonID string, limit, offset int) ([]models.Note, error) {
 	if lessonID != "" && !uuidPattern.MatchString(lessonID) {
 		return nil, fmt.Errorf("%w: lessonId must be a valid id", ErrInvalidInput)
 	}
-	isTeacher, err := authorizeCourse(ctx, s.lessonRepo, user, courseID)
+	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, courseID)
 	if err != nil {
 		return nil, err
 	}
-	return s.noteRepo.ListByCourse(ctx, courseID, lessonID, isTeacher, limit, offset)
+	return s.noteRepo.ListByCourse(ctx, courseID, lessonID, isTeacher, preview, limit, offset)
 }
 
 // OpenNote checks access and returns the note with its PDF stream. Caller must Close the stream.
@@ -130,15 +131,16 @@ func (s *NoteService) OpenNote(ctx context.Context, user *models.User, noteID st
 		return nil, nil, err
 	}
 
-	isTeacher, err := authorizeCourse(ctx, s.lessonRepo, user, note.CourseID)
+	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, note.CourseID)
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) {
 		return nil, nil, ErrNoteNotFound
 	}
 	if err != nil {
 		return nil, nil, err
 	}
-	// Students cannot open notes of lessons the instructor has not published.
-	if !isTeacher && !note.LessonPublished {
+	// Students cannot open notes of lessons the instructor has not published,
+	// and previewers only those of free lessons.
+	if !isTeacher && (!note.LessonPublished || (preview && !note.LessonFree)) {
 		return nil, nil, ErrNoteNotFound
 	}
 

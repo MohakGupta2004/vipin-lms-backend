@@ -91,7 +91,7 @@ func (h *NoteHandler) UploadNote(w http.ResponseWriter, r *http.Request) {
 // ListNotes godoc
 //
 //	@Summary		List a course's notes
-//	@Description	Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. Only the course instructor and enrolled students can see them.
+//	@Description	Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. The course instructor and enrolled students see all of them; users previewing a published course only the notes of free lessons.
 //	@Tags			notes
 //	@Produce		json
 //	@Param			id			path		string									true	"Course ID"
@@ -134,7 +134,7 @@ func (h *NoteHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
 // DownloadNote godoc
 //
 //	@Summary		Download a note
-//	@Description	Streams the PDF. Only the course instructor and enrolled students can download it.
+//	@Description	Streams the PDF. The course instructor and enrolled students can download it; users previewing a published course only if its lesson is free.
 //	@Tags			notes
 //	@Produce		application/pdf
 //	@Param			id	path		string				true	"Note ID"

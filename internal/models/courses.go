@@ -18,6 +18,22 @@ type Course struct {
 	Status           string    `json:"status"`
 	IsFree           bool      `json:"isFree"`
 	CreatedAt        time.Time `json:"createdAt"`
+	// Access is only filled in by GET /courses/{id}: "owner", "full" (enrolled, or the course is free)
+	// or "preview" (published course, not enrolled: free content only).
+	Access string `json:"access,omitempty"`
+}
+
+// CatalogCourse is a published course as the catalog shows it, with how much of it is free to preview.
+type CatalogCourse struct {
+	Course
+	InstructorName  string `json:"instructorName"`
+	Enrolled        bool   `json:"enrolled"`
+	LessonCount     int    `json:"lessonCount"`
+	VideoCount      int    `json:"videoCount"`
+	FreeLessonCount int    `json:"freeLessonCount"`
+	FreeVideoCount  int    `json:"freeVideoCount"`
+	FreeNoteCount   int    `json:"freeNoteCount"`
+	FreeQuizCount   int    `json:"freeQuizCount"`
 }
 
 type CourseRepository struct {
@@ -104,6 +120,70 @@ func (r *CourseRepository) ListEnrolled(ctx context.Context, userID string, limi
 		ORDER BY e.enrolled_at DESC, c.id DESC
 		LIMIT $2 OFFSET $3`
 	return r.queryCourses(ctx, query, userID, limit, offset)
+}
+
+// ListCatalog returns every published course, newest first, with counts of its free content as seen
+// by a user who is not enrolled. In a free course everything counts as free.
+// freeOnly keeps just the courses that have something free to preview.
+func (r *CourseRepository) ListCatalog(ctx context.Context, userID string, freeOnly bool, limit, offset int) ([]CatalogCourse, error) {
+	query := `
+		WITH stats AS (
+			SELECT c.id,
+			       (SELECT COUNT(*) FROM lessons l
+			         WHERE l.course_id = c.id AND l.deleted_at IS NULL AND l.is_published) AS lessons,
+			       (SELECT COUNT(*) FROM lessons l
+			         WHERE l.course_id = c.id AND l.deleted_at IS NULL AND l.is_published
+			           AND (c.is_free OR l.is_free)) AS free_lessons,
+			       (SELECT COUNT(*) FROM videos v JOIN lessons l ON l.id = v.lesson_id AND l.deleted_at IS NULL
+			         WHERE v.course_id = c.id AND v.status = 'ready' AND l.is_published) AS videos,
+			       (SELECT COUNT(*) FROM videos v JOIN lessons l ON l.id = v.lesson_id AND l.deleted_at IS NULL
+			         WHERE v.course_id = c.id AND v.status = 'ready' AND l.is_published
+			           AND (c.is_free OR v.is_free OR l.is_free)) AS free_videos,
+			       (SELECT COUNT(*) FROM notes n JOIN lessons l ON l.id = n.lesson_id AND l.deleted_at IS NULL
+			         WHERE n.course_id = c.id AND n.object_key IS NOT NULL AND n.visibility = 'course'
+			           AND n.deleted_at IS NULL AND l.is_published AND (c.is_free OR l.is_free)) AS free_notes,
+			       (SELECT COUNT(*) FROM quizzes q JOIN lessons l ON l.id = q.lesson_id AND l.deleted_at IS NULL
+			         WHERE q.course_id = c.id AND q.deleted_at IS NULL AND q.status = 'published'
+			           AND l.is_published AND (c.is_free OR q.is_free OR l.is_free)) AS free_quizzes
+			FROM courses c
+			WHERE c.status = 'published' AND c.deleted_at IS NULL
+		)
+		SELECT c.id, c.exam_id, c.instructor_id, c.title, c.slug,
+		       COALESCE(c.short_description, ''), COALESCE(c.description, ''), c.status, c.is_free, c.created_at,
+		       u.first_name || ' ' || u.last_name,
+		       EXISTS (
+		           SELECT 1 FROM enrollments e
+		           WHERE e.course_id = c.id AND e.user_id = $1
+		             AND e.status IN ('active', 'completed')
+		             AND (e.expires_at IS NULL OR e.expires_at > now())
+		       ),
+		       s.lessons, s.videos, s.free_lessons, s.free_videos, s.free_notes, s.free_quizzes
+		FROM courses c
+		JOIN stats s ON s.id = c.id
+		JOIN users u ON u.id = c.instructor_id
+		WHERE NOT $2 OR (s.free_lessons + s.free_videos + s.free_notes + s.free_quizzes) > 0
+		ORDER BY c.created_at DESC, c.id DESC
+		LIMIT $3 OFFSET $4`
+
+	rows, err := r.db.QueryContext(ctx, query, userID, freeOnly, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	courses := []CatalogCourse{}
+	for rows.Next() {
+		var c CatalogCourse
+		err := rows.Scan(&c.ID, &c.ExamID, &c.InstructorID, &c.Title, &c.Slug,
+			&c.ShortDescription, &c.Description, &c.Status, &c.IsFree, &c.CreatedAt,
+			&c.InstructorName, &c.Enrolled,
+			&c.LessonCount, &c.VideoCount, &c.FreeLessonCount, &c.FreeVideoCount, &c.FreeNoteCount, &c.FreeQuizCount)
+		if err != nil {
+			return nil, err
+		}
+		courses = append(courses, c)
+	}
+	return courses, rows.Err()
 }
 
 func (r *CourseRepository) queryCourses(ctx context.Context, query string, args ...any) ([]Course, error) {

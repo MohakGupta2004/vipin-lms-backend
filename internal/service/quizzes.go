@@ -345,7 +345,8 @@ func (s *QuizService) ownedQuiz(ctx context.Context, user *models.User, quizID s
 	return quiz, nil
 }
 
-// ListQuizzes returns a lesson's quizzes, without questions, for the instructor or an enrolled student.
+// ListQuizzes returns a lesson's quizzes, without questions, for the instructor or an enrolled student
+// (previewers: only the free ones).
 // Students only see published quizzes of published lessons.
 func (s *QuizService) ListQuizzes(ctx context.Context, user *models.User, lessonID string) ([]models.Quiz, error) {
 	if !uuidPattern.MatchString(lessonID) {
@@ -359,7 +360,7 @@ func (s *QuizService) ListQuizzes(ctx context.Context, user *models.User, lesson
 		return nil, err
 	}
 
-	isTeacher, err := authorizeCourse(ctx, s.lessonRepo, user, lesson.CourseID)
+	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, lesson.CourseID)
 	if errors.Is(err, ErrCourseNotFound) {
 		return nil, ErrLessonNotFound
 	}
@@ -369,7 +370,18 @@ func (s *QuizService) ListQuizzes(ctx context.Context, user *models.User, lesson
 	if !isTeacher && !lesson.IsPublished {
 		return nil, ErrLessonNotFound
 	}
-	return s.quizRepo.ListByLesson(ctx, lessonID, isTeacher)
+	quizzes, err := s.quizRepo.ListByLesson(ctx, lessonID, isTeacher)
+	if err != nil || !preview {
+		return quizzes, err
+	}
+	// Previewers only see free quizzes, or every quiz of a free lesson.
+	free := quizzes[:0]
+	for _, q := range quizzes {
+		if q.IsFree || lesson.IsFree {
+			free = append(free, q)
+		}
+	}
+	return free, nil
 }
 
 // GetQuiz returns a quiz with its questions. The instructor sees the correct options and explanations;
@@ -486,7 +498,8 @@ func (s *QuizService) ListAttempts(ctx context.Context, user *models.User, quizI
 }
 
 // authorizeQuiz loads a quiz the user may see: the course's instructor sees every quiz, an enrolled
-// student only published quizzes of published lessons. Anything else looks like a missing quiz.
+// student only published quizzes of published lessons, and a user previewing the course only those
+// that are free (or in a free lesson). Anything else looks like a missing quiz.
 func (s *QuizService) authorizeQuiz(ctx context.Context, user *models.User, quizID string) (*models.Quiz, bool, error) {
 	if !uuidPattern.MatchString(quizID) {
 		return nil, false, ErrQuizNotFound
@@ -499,7 +512,7 @@ func (s *QuizService) authorizeQuiz(ctx context.Context, user *models.User, quiz
 		return nil, false, err
 	}
 
-	isTeacher, err := authorizeCourse(ctx, s.lessonRepo, user, quiz.CourseID)
+	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, quiz.CourseID)
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) {
 		return nil, false, ErrQuizNotFound
 	}
@@ -507,6 +520,9 @@ func (s *QuizService) authorizeQuiz(ctx context.Context, user *models.User, quiz
 		return nil, false, err
 	}
 	if !isTeacher && (quiz.Status != "published" || !quiz.LessonPublished) {
+		return nil, false, ErrQuizNotFound
+	}
+	if preview && !quiz.IsFree && !quiz.LessonFree {
 		return nil, false, ErrQuizNotFound
 	}
 	return quiz, isTeacher, nil

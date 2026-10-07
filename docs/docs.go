@@ -475,6 +475,79 @@ const docTemplate = `{
                 }
             }
         },
+        "/catalog/courses": {
+            "get": {
+                "description": "Any logged-in user. Every published course, newest first, with the instructor's name, whether the user is enrolled, and counts of what a user who is not enrolled can open for free (in a free course everything is free).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "courses"
+                ],
+                "summary": "Browse published courses",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Only courses with free content",
+                        "name": "freeOnly",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max courses to return (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of courses to skip (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Courses",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.CatalogCourse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid limit or offset",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/courses": {
             "get": {
                 "description": "Admin only. Returns all courses that are not deleted, newest first.",
@@ -624,7 +697,7 @@ const docTemplate = `{
         },
         "/courses/{id}": {
             "get": {
-                "description": "Admins can read any course and owners their own (drafts included). A student can read a published course they have a valid enrollment in. Everyone else gets 404.",
+                "description": "Admins can read any course and owners their own (drafts included). Any other logged-in user can read a published course. access tells what they may open: \"owner\", \"full\" (valid enrollment, or the course is free) or \"preview\" (only free lessons, notes, quizzes and videos). Unpublished courses are 404 for everyone else.",
                 "produces": [
                     "application/json"
                 ],
@@ -833,7 +906,7 @@ const docTemplate = `{
         },
         "/courses/{id}/lessons": {
             "get": {
-                "description": "Returns the course's lessons (chapters) in order, each with its PDF notes. Only the course instructor and enrolled students can see it. Students see published lessons only.",
+                "description": "Returns the course's lessons (chapters) in order, each with its PDF notes. The course instructor and enrolled students (or anyone, for a free course) see it in full; students see published lessons only. Other logged-in users previewing a published course get every published lesson, with notes only on free lessons and locked=true on the rest.",
                 "produces": [
                     "application/json"
                 ],
@@ -982,7 +1055,7 @@ const docTemplate = `{
         },
         "/courses/{id}/notes": {
             "get": {
-                "description": "Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. Only the course instructor and enrolled students can see them.",
+                "description": "Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. The course instructor and enrolled students see all of them; users previewing a published course only the notes of free lessons.",
                 "produces": [
                     "application/json"
                 ],
@@ -1157,7 +1230,7 @@ const docTemplate = `{
         },
         "/courses/{id}/videos": {
             "get": {
-                "description": "Owner sees every video. Students see ready videos of published lessons; users not enrolled see only free ones.",
+                "description": "Owner sees every video. Students see ready videos of published lessons. Users previewing a published course they are not enrolled in see them too, with locked=true on the ones they cannot stream.",
                 "produces": [
                     "application/json"
                 ],
@@ -1757,7 +1830,7 @@ const docTemplate = `{
         },
         "/lessons/{id}/quizzes": {
             "get": {
-                "description": "Returns the quizzes of a lesson without their questions. Only the course instructor and enrolled students can see them. Students see published quizzes only.",
+                "description": "Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users previewing a published course only see free quizzes, or every quiz of a free lesson.",
                 "produces": [
                     "application/json"
                 ],
@@ -1906,7 +1979,7 @@ const docTemplate = `{
         },
         "/lessons/{id}/videos": {
             "get": {
-                "description": "Owner sees every video. Students see ready videos of published lessons; users not enrolled see only free ones.",
+                "description": "Owner sees every video. Students see ready videos of published lessons. Users previewing a published course they are not enrolled in see them too, with locked=true on the ones they cannot stream.",
                 "produces": [
                     "application/json"
                 ],
@@ -2190,7 +2263,7 @@ const docTemplate = `{
         },
         "/notes/{id}/file": {
             "get": {
-                "description": "Streams the PDF. Only the course instructor and enrolled students can download it.",
+                "description": "Streams the PDF. The course instructor and enrolled students can download it; users previewing a published course only if its lesson is free.",
                 "produces": [
                     "application/pdf"
                 ],
@@ -3353,7 +3426,7 @@ const docTemplate = `{
         },
         "/videos/{id}/stream": {
             "get": {
-                "description": "Returns a signed HLS manifest URL, valid for 15 minutes, that any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is: every playlist and segment URL inside it is already signed. queryParams is the bare signature. Refetch before expiresAt. Free videos in published courses are open to any logged-in user; everything else needs the course owner or an enrolled student.",
+                "description": "Returns a signed HLS manifest URL, valid for 15 minutes, that any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is: every playlist and segment URL inside it is already signed. queryParams is the bare signature. Refetch before expiresAt. Free videos (or videos of free lessons) in published courses, and every video of a free course, are open to any logged-in user; everything else needs the course owner or an enrolled student.",
                 "produces": [
                     "application/json"
                 ],
@@ -3867,9 +3940,76 @@ const docTemplate = `{
                 }
             }
         },
+        "models.CatalogCourse": {
+            "type": "object",
+            "properties": {
+                "access": {
+                    "description": "Access is only filled in by GET /courses/{id}: \"owner\", \"full\" (enrolled, or the course is free)\nor \"preview\" (published course, not enrolled: free content only).",
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enrolled": {
+                    "type": "boolean"
+                },
+                "examId": {
+                    "type": "string"
+                },
+                "freeLessonCount": {
+                    "type": "integer"
+                },
+                "freeNoteCount": {
+                    "type": "integer"
+                },
+                "freeQuizCount": {
+                    "type": "integer"
+                },
+                "freeVideoCount": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "instructorId": {
+                    "type": "string"
+                },
+                "instructorName": {
+                    "type": "string"
+                },
+                "isFree": {
+                    "type": "boolean"
+                },
+                "lessonCount": {
+                    "type": "integer"
+                },
+                "shortDescription": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "videoCount": {
+                    "type": "integer"
+                }
+            }
+        },
         "models.Course": {
             "type": "object",
             "properties": {
+                "access": {
+                    "description": "Access is only filled in by GET /courses/{id}: \"owner\", \"full\" (enrolled, or the course is free)\nor \"preview\" (published course, not enrolled: free content only).",
+                    "type": "string"
+                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -3969,6 +4109,10 @@ const docTemplate = `{
                 },
                 "lessonType": {
                     "type": "string"
+                },
+                "locked": {
+                    "description": "Locked is set for users previewing a course they are not enrolled in: the lesson's notes,\nquizzes and videos stay closed unless they are free on their own.",
+                    "type": "boolean"
                 },
                 "notes": {
                     "type": "array",
@@ -4254,6 +4398,10 @@ const docTemplate = `{
                 },
                 "lessonId": {
                     "type": "string"
+                },
+                "locked": {
+                    "description": "Locked is set for users previewing a course: they see the title but cannot stream it.",
+                    "type": "boolean"
                 },
                 "sizeBytes": {
                     "type": "integer"

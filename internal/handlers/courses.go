@@ -177,7 +177,7 @@ func (h *CourseHandler) UpdateCourseStatus(w http.ResponseWriter, r *http.Reques
 // GetCourse godoc
 //
 //	@Summary		Get a course
-//	@Description	Admins can read any course and owners their own (drafts included). A student can read a published course they have a valid enrollment in. Everyone else gets 404.
+//	@Description	Admins can read any course and owners their own (drafts included). Any other logged-in user can read a published course. access tells what they may open: "owner", "full" (valid enrollment, or the course is free) or "preview" (only free lessons, notes, quizzes and videos). Unpublished courses are 404 for everyone else.
 //	@Tags			courses
 //	@Produce		json
 //	@Param			id	path		string									true	"Course ID"
@@ -199,6 +199,47 @@ func (h *CourseHandler) GetCourse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteJSONResponse(w, http.StatusOK, course)
+}
+
+// ListCatalog godoc
+//
+//	@Summary		Browse published courses
+//	@Description	Any logged-in user. Every published course, newest first, with the instructor's name, whether the user is enrolled, and counts of what a user who is not enrolled can open for free (in a free course everything is free).
+//	@Tags			courses
+//	@Produce		json
+//	@Param			freeOnly	query		bool												false	"Only courses with free content"
+//	@Param			limit		query		int													false	"Max courses to return (default 20, max 100)"
+//	@Param			offset		query		int													false	"Number of courses to skip (default 0)"
+//	@Success		200			{object}	utils.JSONResponse{data=[]models.CatalogCourse}	"Courses"
+//	@Failure		400			{object}	utils.JSONResponse									"Invalid limit or offset"
+//	@Failure		401			{object}	utils.JSONResponse									"Not logged in"
+//	@Failure		500			{object}	utils.JSONResponse									"Internal server error"
+//	@Router			/catalog/courses [get]
+func (h *CourseHandler) ListCatalog(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	limit, err := intQuery(r, "limit", defaultCoursesLimit)
+	if err != nil || limit < 1 || limit > maxCoursesLimit {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "limit must be between 1 and 100")
+		return
+	}
+	offset, err := intQuery(r, "offset", 0)
+	if err != nil || offset < 0 {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "offset must be 0 or more")
+		return
+	}
+	freeOnly := r.URL.Query().Get("freeOnly") == "true"
+
+	courses, err := h.courseService.ListCatalog(r.Context(), user, freeOnly, limit, offset)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, courses)
 }
 
 // ListMyCourses godoc

@@ -190,7 +190,7 @@ type VideoStreamResponse struct {
 // StreamVideo godoc
 //
 //	@Summary		Get a signed streaming URL for a video
-//	@Description	Returns a signed HLS manifest URL, valid for 15 minutes, that any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is: every playlist and segment URL inside it is already signed. queryParams is the bare signature. Refetch before expiresAt. Free videos in published courses are open to any logged-in user; everything else needs the course owner or an enrolled student.
+//	@Description	Returns a signed HLS manifest URL, valid for 15 minutes, that any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is: every playlist and segment URL inside it is already signed. queryParams is the bare signature. Refetch before expiresAt. Free videos (or videos of free lessons) in published courses, and every video of a free course, are open to any logged-in user; everything else needs the course owner or an enrolled student.
 //	@Tags			videos
 //	@Produce		json
 //	@Param			id	path		string										true	"Video ID"
@@ -267,7 +267,7 @@ func playlistBaseURL(r *http.Request, videoID string) string {
 // ListLessonVideos godoc
 //
 //	@Summary		List a lesson's videos
-//	@Description	Owner sees every video. Students see ready videos of published lessons; users not enrolled see only free ones.
+//	@Description	Owner sees every video. Students see ready videos of published lessons. Users previewing a published course they are not enrolled in see them too, with locked=true on the ones they cannot stream.
 //	@Tags			videos
 //	@Produce		json
 //	@Param			id	path		string									true	"Lesson ID"
@@ -293,7 +293,7 @@ func (h *VideoHandler) ListLessonVideos(w http.ResponseWriter, r *http.Request) 
 // ListCourseVideos godoc
 //
 //	@Summary		List a course's videos
-//	@Description	Owner sees every video. Students see ready videos of published lessons; users not enrolled see only free ones.
+//	@Description	Owner sees every video. Students see ready videos of published lessons. Users previewing a published course they are not enrolled in see them too, with locked=true on the ones they cannot stream.
 //	@Tags			videos
 //	@Produce		json
 //	@Param			id	path		string									true	"Course ID"

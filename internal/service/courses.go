@@ -124,8 +124,9 @@ func (s *CourseService) ListCourses(ctx context.Context, user *models.User, limi
 	return s.courseRepo.ListCourses(ctx, limit, offset)
 }
 
-// GetCourse returns one course. Admins see any course, the owner sees theirs, and a student with a
-// valid enrollment sees it once it is published. Everyone else gets ErrCourseNotFound.
+// GetCourse returns one course with the user's Access to it. Admins see any course and the owner sees
+// theirs (drafts included). Every other logged-in user sees a published course: in full when enrolled
+// or when the course is free, otherwise as a preview of its free content. Anything else is ErrCourseNotFound.
 func (s *CourseService) GetCourse(ctx context.Context, user *models.User, courseID string) (*models.Course, error) {
 	if !uuidPattern.MatchString(courseID) {
 		return nil, ErrCourseNotFound
@@ -138,20 +139,32 @@ func (s *CourseService) GetCourse(ctx context.Context, user *models.User, course
 		return nil, err
 	}
 
-	if user.Role == models.RoleAdmin || (user.CanTeach() && course.InstructorID == user.ID) {
+	if user.CanTeach() && course.InstructorID == user.ID {
+		course.Access = "owner"
 		return course, nil
 	}
 	if course.Status != "published" {
+		if user.Role == models.RoleAdmin {
+			return course, nil // admins may read any course, but its content stays the owner's
+		}
 		return nil, ErrCourseNotFound
 	}
 	enrolled, err := s.courseRepo.HasValidEnrollment(ctx, course.ID, user.ID)
 	if err != nil {
 		return nil, err
 	}
-	if !enrolled {
-		return nil, ErrCourseNotFound
+	if enrolled || course.IsFree {
+		course.Access = "full"
+	} else {
+		course.Access = "preview"
 	}
 	return course, nil
+}
+
+// ListCatalog returns every published course with how much of it is free to preview, for any
+// logged-in user. freeOnly keeps just the courses with free content.
+func (s *CourseService) ListCatalog(ctx context.Context, user *models.User, freeOnly bool, limit, offset int) ([]models.CatalogCourse, error) {
+	return s.courseRepo.ListCatalog(ctx, user.ID, freeOnly, limit, offset)
 }
 
 // ListMyCourses returns the courses an instructor or admin owns (drafts included), or the published

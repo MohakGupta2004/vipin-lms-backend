@@ -86,7 +86,7 @@ func (h *LessonHandler) CreateLesson(w http.ResponseWriter, r *http.Request) {
 // ListLessons godoc
 //
 //	@Summary		List a course's lessons with their notes
-//	@Description	Returns the course's lessons (chapters) in order, each with its PDF notes. Only the course instructor and enrolled students can see it. Students see published lessons only.
+//	@Description	Returns the course's lessons (chapters) in order, each with its PDF notes. The course instructor and enrolled students (or anyone, for a free course) see it in full; students see published lessons only. Other logged-in users previewing a published course get every published lesson, with notes only on free lessons and locked=true on the rest.
 //	@Tags			lessons
 //	@Produce		json
 //	@Param			id	path		string										true	"Course ID"

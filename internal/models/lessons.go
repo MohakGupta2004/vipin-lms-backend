@@ -3,7 +3,6 @@ package models
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"time"
 )
 
@@ -19,6 +18,9 @@ type Lesson struct {
 	Position    int       `json:"position"`
 	CreatedAt   time.Time `json:"createdAt"`
 	Notes       []Note    `json:"notes,omitempty"`
+	// Locked is set for users previewing a course they are not enrolled in: the lesson's notes,
+	// quizzes and videos stay closed unless they are free on their own.
+	Locked bool `json:"locked,omitempty"`
 }
 
 type LessonRepository struct {
@@ -36,9 +38,11 @@ func NewLessonRepository(db *sql.DB) *LessonRepository {
 //   - isInstructor: the user is the course's instructor_id (the caller still checks the role).
 //   - isEnrolled: the course is published and the user has an enrollment that is still valid.
 //     Students never see the content of draft or archived courses.
-func (r *LessonRepository) CourseAccess(ctx context.Context, courseID, userID string) (isInstructor, isEnrolled bool, err error) {
+func (r *LessonRepository) CourseAccess(ctx context.Context, courseID, userID string) (access CourseAccessInfo, err error) {
 	query := `
 		SELECT c.instructor_id = $2,
+		       c.status = 'published',
+		       c.is_free,
 		       c.status = 'published' AND EXISTS (
 		           SELECT 1 FROM enrollments e
 		           WHERE e.course_id = c.id
@@ -49,19 +53,17 @@ func (r *LessonRepository) CourseAccess(ctx context.Context, courseID, userID st
 		FROM courses c
 		WHERE c.id = $1 AND c.deleted_at IS NULL`
 
-	err = r.db.QueryRowContext(ctx, query, courseID, userID).Scan(&isInstructor, &isEnrolled)
-	return isInstructor, isEnrolled, err
+	err = r.db.QueryRowContext(ctx, query, courseID, userID).
+		Scan(&access.IsInstructor, &access.Published, &access.Free, &access.IsEnrolled)
+	return access, err
 }
 
-// IsCoursePublished reports whether the course exists, is not deleted and is published.
-func (r *LessonRepository) IsCoursePublished(ctx context.Context, courseID string) (bool, error) {
-	var ok bool
-	err := r.db.QueryRowContext(ctx,
-		`SELECT status = 'published' FROM courses WHERE id = $1 AND deleted_at IS NULL`, courseID).Scan(&ok)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return ok, err
+// CourseAccessInfo is what CourseAccess knows about one user and one course.
+type CourseAccessInfo struct {
+	IsInstructor bool // the user's id is the course's instructor_id
+	IsEnrolled   bool // valid enrollment in the published course
+	Published    bool
+	Free         bool // the whole course is free
 }
 
 // CreateLesson saves a new lesson at the end of the course and fills in the generated fields.

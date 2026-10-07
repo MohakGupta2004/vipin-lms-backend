@@ -292,11 +292,11 @@ func (s *VideoService) watchableVideo(ctx context.Context, user *models.User, vi
 	if err != nil {
 		return nil, err
 	}
-	isTeacher, freeOnly, err := s.videoAccess(ctx, user, lesson)
+	isTeacher, preview, err := s.videoAccess(ctx, user, lesson)
 	if err != nil {
 		return nil, notFoundAs(err, ErrVideoNotFound)
 	}
-	if freeOnly && !video.IsFree && !lesson.IsFree {
+	if preview && !video.IsFree && !lesson.IsFree {
 		return nil, ErrVideoNotFound
 	}
 	if video.Status != "ready" || video.HLSPrefix == "" {
@@ -401,56 +401,68 @@ func (s *VideoService) ListLessonVideos(ctx context.Context, user *models.User, 
 	if err != nil {
 		return nil, err
 	}
-	isTeacher, freeOnly, err := s.videoAccess(ctx, user, lesson)
+	isTeacher, preview, err := s.videoAccess(ctx, user, lesson)
 	if err != nil {
 		return nil, notFoundAs(err, ErrLessonNotFound)
 	}
-	return s.videoRepo.List(ctx, models.VideoListFilter{
-		CourseID: lesson.CourseID, LessonID: lesson.ID, OnlyReady: !isTeacher, OnlyFree: freeOnly,
+	videos, err := s.videoRepo.List(ctx, models.VideoListFilter{
+		CourseID: lesson.CourseID, LessonID: lesson.ID, OnlyReady: !isTeacher,
 	})
+	if err != nil || !preview {
+		return videos, err
+	}
+	for i := range videos {
+		videos[i].Locked = !videos[i].IsFree && !lesson.IsFree
+	}
+	return videos, nil
 }
 
 // ListCourseVideos lists every video of a course the user may see, in lesson order.
+// Users previewing the course get every ready video so they can see the whole curriculum,
+// with locked set on the ones they cannot stream.
 func (s *VideoService) ListCourseVideos(ctx context.Context, user *models.User, courseID string) ([]models.Video, error) {
-	isTeacher, freeOnly, err := s.courseAccess(ctx, user, courseID)
+	isTeacher, preview, err := s.courseAccess(ctx, user, courseID)
 	if err != nil {
 		return nil, notFoundAs(err, ErrCourseNotFound)
 	}
-	return s.videoRepo.List(ctx, models.VideoListFilter{
-		CourseID: courseID, OnlyReady: !isTeacher, OnlyFree: freeOnly,
-	})
+	videos, err := s.videoRepo.List(ctx, models.VideoListFilter{CourseID: courseID, OnlyReady: !isTeacher})
+	if err != nil || !preview {
+		return videos, err
+	}
+	lessons, err := s.lessonRepo.ListLessons(ctx, courseID, false)
+	if err != nil {
+		return nil, err
+	}
+	freeLesson := make(map[string]bool, len(lessons))
+	for _, l := range lessons {
+		freeLesson[l.ID] = l.IsFree
+	}
+	for i := range videos {
+		videos[i].Locked = !videos[i].IsFree && !freeLesson[videos[i].LessonID]
+	}
+	return videos, nil
 }
 
-// courseAccess is authorizeCourse with a fallback: users who may not read the whole course can still
-// see its free content when the course is published (freeOnly).
-func (s *VideoService) courseAccess(ctx context.Context, user *models.User, courseID string) (isTeacher, freeOnly bool, err error) {
-	isTeacher, err = authorizeCourse(ctx, s.lessonRepo, user, courseID)
-	if err == nil {
-		return isTeacher, false, nil
-	}
-	if !errors.Is(err, ErrForbidden) {
-		return false, false, err
-	}
-	published, perr := s.lessonRepo.IsCoursePublished(ctx, courseID)
-	if perr != nil {
-		return false, false, perr
-	}
-	if !published {
+// courseAccess decides how a user may see a course's videos: in full (isTeacher, enrolled, or a free
+// course) or as a preview of a published course (preview: only free videos can be streamed).
+func (s *VideoService) courseAccess(ctx context.Context, user *models.User, courseID string) (isTeacher, preview bool, err error) {
+	isTeacher, preview, err = authorizePreview(ctx, s.lessonRepo, user, courseID)
+	if errors.Is(err, ErrForbidden) {
 		return false, false, ErrCourseNotFound
 	}
-	return false, true, nil
+	return isTeacher, preview, err
 }
 
 // videoAccess decides how a user may see a lesson's videos. Non-owners never see unpublished lessons.
-func (s *VideoService) videoAccess(ctx context.Context, user *models.User, lesson *models.Lesson) (isTeacher, freeOnly bool, err error) {
-	isTeacher, freeOnly, err = s.courseAccess(ctx, user, lesson.CourseID)
+func (s *VideoService) videoAccess(ctx context.Context, user *models.User, lesson *models.Lesson) (isTeacher, preview bool, err error) {
+	isTeacher, preview, err = s.courseAccess(ctx, user, lesson.CourseID)
 	if err != nil {
 		return false, false, err
 	}
 	if !isTeacher && !lesson.IsPublished {
 		return false, false, ErrLessonNotFound
 	}
-	return isTeacher, freeOnly, nil
+	return isTeacher, preview, nil
 }
 
 // notFoundAs maps "may not see it" errors to the caller's not-found error.

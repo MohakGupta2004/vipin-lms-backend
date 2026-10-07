@@ -27,6 +27,7 @@ type Quiz struct {
 	Questions     []Question `json:"questions,omitempty"`
 
 	LessonPublished bool `json:"-"` // students may only see quizzes of published lessons
+	LessonFree      bool `json:"-"` // quizzes of free lessons are open to users previewing the course
 }
 
 // Question is one question of a quiz. Explanation is only sent to the instructor before submission.
@@ -184,7 +185,7 @@ func (r *QuizRepository) SoftDelete(ctx context.Context, quizID string) error {
 
 const quizSelect = `SELECT q.id, q.course_id, q.lesson_id, q.created_by, q.title, COALESCE(q.description, ''),
 		q.time_limit_sec, q.pass_percent, q.is_free, q.status,
-		(SELECT COUNT(*) FROM questions qu WHERE qu.quiz_id = q.id), q.created_at, l.is_published
+		(SELECT COUNT(*) FROM questions qu WHERE qu.quiz_id = q.id), q.created_at, l.is_published, l.is_free
 	FROM quizzes q
 	JOIN lessons l ON l.id = q.lesson_id AND l.deleted_at IS NULL
 	WHERE q.deleted_at IS NULL`
@@ -192,7 +193,7 @@ const quizSelect = `SELECT q.id, q.course_id, q.lesson_id, q.created_by, q.title
 func scanQuiz(row interface{ Scan(...any) error }, q *Quiz) error {
 	var timeLimit sql.NullInt32
 	err := row.Scan(&q.ID, &q.CourseID, &q.LessonID, &q.CreatedBy, &q.Title, &q.Description,
-		&timeLimit, &q.PassPercent, &q.IsFree, &q.Status, &q.QuestionCount, &q.CreatedAt, &q.LessonPublished)
+		&timeLimit, &q.PassPercent, &q.IsFree, &q.Status, &q.QuestionCount, &q.CreatedAt, &q.LessonPublished, &q.LessonFree)
 	if err != nil {
 		return err
 	}

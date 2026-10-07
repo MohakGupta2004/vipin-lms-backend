@@ -22,6 +22,7 @@ type Note struct {
 
 	ObjectKey       string `json:"-"` // storage location, never sent to clients
 	LessonPublished bool   `json:"-"` // students may only see notes of published lessons
+	LessonFree      bool   `json:"-"` // notes of free lessons are open to users previewing the course
 }
 
 type NoteRepository struct {
@@ -45,7 +46,7 @@ func (r *NoteRepository) Create(ctx context.Context, n *Note) error {
 }
 
 const noteSelect = `SELECT n.id, n.course_id, n.lesson_id, COALESCE(n.title, ''), n.content, n.file_name, n.size_bytes,
-		n.author_id, u.first_name || ' ' || u.last_name, n.created_at, n.object_key, l.is_published
+		n.author_id, u.first_name || ' ' || u.last_name, n.created_at, n.object_key, l.is_published, l.is_free
 	FROM notes n
 	JOIN users u ON u.id = n.author_id
 	JOIN lessons l ON l.id = n.lesson_id AND l.deleted_at IS NULL
@@ -53,17 +54,19 @@ const noteSelect = `SELECT n.id, n.course_id, n.lesson_id, COALESCE(n.title, '')
 
 func scanNote(row interface{ Scan(...any) error }, n *Note) error {
 	return row.Scan(&n.ID, &n.CourseID, &n.LessonID, &n.Title, &n.Description, &n.FileName, &n.SizeBytes,
-		&n.UploadedBy, &n.UploaderName, &n.CreatedAt, &n.ObjectKey, &n.LessonPublished)
+		&n.UploadedBy, &n.UploaderName, &n.CreatedAt, &n.ObjectKey, &n.LessonPublished, &n.LessonFree)
 }
 
 // ListByCourse returns a course's PDF notes, newest first. Empty lessonID means all lessons.
 // Notes of unpublished lessons are left out unless includeUnpublished is set.
+// onlyFreeLessons keeps just the notes of free lessons (for users previewing the course).
 // A limit of 0 means no limit.
-func (r *NoteRepository) ListByCourse(ctx context.Context, courseID, lessonID string, includeUnpublished bool, limit, offset int) ([]Note, error) {
+func (r *NoteRepository) ListByCourse(ctx context.Context, courseID, lessonID string, includeUnpublished, onlyFreeLessons bool, limit, offset int) ([]Note, error) {
 	query := noteSelect + `
 		AND n.course_id = $1
 		AND ($2::uuid IS NULL OR n.lesson_id = $2)
 		AND ($3 OR l.is_published)
+		AND (NOT $6 OR l.is_free)
 		ORDER BY n.created_at DESC, n.id DESC
 		LIMIT $4 OFFSET $5`
 
@@ -71,7 +74,7 @@ func (r *NoteRepository) ListByCourse(ctx context.Context, courseID, lessonID st
 	if limit > 0 {
 		limitArg = limit
 	}
-	rows, err := r.db.QueryContext(ctx, query, courseID, nullIfEmpty(lessonID), includeUnpublished, limitArg, offset)
+	rows, err := r.db.QueryContext(ctx, query, courseID, nullIfEmpty(lessonID), includeUnpublished, limitArg, offset, onlyFreeLessons)
 	if err != nil {
 		return nil, err
 	}
