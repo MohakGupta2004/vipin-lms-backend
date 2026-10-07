@@ -30,6 +30,8 @@ type User struct {
 	Password    string    `json:"-"`
 	Role        Role      `json:"role"`
 	LastLoginAt time.Time `json:"lastLoginAt"`
+	// EmailVerified is true once the user has confirmed their email with a one-time code.
+	EmailVerified bool `json:"emailVerified"`
 }
 
 // CanTeach reports whether the user's role may own and manage courses.
@@ -74,11 +76,11 @@ func (r *UserRepository) CreateUser(firstName, lastName, email, password string,
 }
 
 func (r *UserRepository) GetUserByEmail(email string, ctx context.Context) (*User, error) {
-	query := "SELECT id, first_name, last_name, email, password, role, last_login_at FROM users WHERE email = $1"
+	query := "SELECT id, first_name, last_name, email, password, role, last_login_at, email_verified_at IS NOT NULL FROM users WHERE lower(email) = lower($1)"
 	row := r.db.QueryRowContext(ctx, query, email)
 
 	user := &User{}
-	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.Role, &user.LastLoginAt)
+	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.Role, &user.LastLoginAt, &user.EmailVerified)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // User not found
@@ -89,11 +91,11 @@ func (r *UserRepository) GetUserByEmail(email string, ctx context.Context) (*Use
 	return user, nil
 }
 func (r *UserRepository) GetUserById(id string, ctx context.Context) (*User, error) {
-	query := "SELECT id, first_name, last_name, email, password, role, last_login_at FROM users WHERE id = $1"
+	query := "SELECT id, first_name, last_name, email, password, role, last_login_at, email_verified_at IS NOT NULL FROM users WHERE id = $1"
 	row := r.db.QueryRowContext(ctx, query, id)
 
 	user := &User{}
-	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.Role, &user.LastLoginAt)
+	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.Role, &user.LastLoginAt, &user.EmailVerified)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // User not found

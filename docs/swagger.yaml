@@ -96,6 +96,11 @@ definitions:
       title:
         type: string
     type: object
+  handlers.ForgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    type: object
   handlers.LoginRequest:
     properties:
       email:
@@ -112,6 +117,13 @@ definitions:
       lastName:
         type: string
       password:
+        type: string
+    type: object
+  handlers.ResetPasswordRequest:
+    properties:
+      newPassword:
+        type: string
+      resetToken:
         type: string
     type: object
   handlers.SubmitAnswerRequest:
@@ -189,6 +201,25 @@ definitions:
     properties:
       status:
         description: draft or published
+        type: string
+    type: object
+  handlers.VerifyOTPRequest:
+    properties:
+      email:
+        type: string
+      otp:
+        type: string
+      purpose:
+        enum:
+        - email_verification
+        - password_reset
+        type: string
+    type: object
+  handlers.VerifyOTPResponse:
+    properties:
+      resetToken:
+        description: ResetToken is returned only for purpose password_reset; send
+          it to /auth/reset-password.
         type: string
     type: object
   handlers.VideoProgressResponse:
@@ -477,6 +508,10 @@ definitions:
     properties:
       email:
         type: string
+      emailVerified:
+        description: EmailVerified is true once the user has confirmed their email
+          with a one-time code.
+        type: boolean
       firstName:
         type: string
       id:
@@ -538,6 +573,43 @@ info:
   title: Vipin LMS API
   version: "1.0"
 paths:
+  /auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: Emails a 6-digit reset code if the address belongs to an account.
+        The response is identical either way, so it does not reveal which addresses
+        are registered.
+      parameters:
+      - description: Account email
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: Malformed payload or invalid email
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "429":
+          description: Too many requests
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Request a password reset code
+      tags:
+      - auth
   /auth/login:
     post:
       consumes:
@@ -679,6 +751,115 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Register a new user
+      tags:
+      - auth
+  /auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Spends the resetToken from /auth/verify-otp. The password must
+        be 8 to 72 characters. A confirmation email is sent.
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Password changed
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: Malformed payload, weak password, or invalid/expired reset
+            token
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "429":
+          description: Too many requests
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Set a new password
+      tags:
+      - auth
+  /auth/verify-email:
+    post:
+      description: Emails a 6-digit code to the logged-in user's address. The email
+        is sent asynchronously. One code per minute; the code is valid for 10 minutes.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Code queued for delivery
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "409":
+          description: Email already verified
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "429":
+          description: Too many requests
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: Email queue busy, try again shortly
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Send an email verification code
+      tags:
+      - auth
+  /auth/verify-otp:
+    post:
+      consumes:
+      - application/json
+      description: purpose=email_verification marks the email verified. purpose=password_reset
+        returns a single-use resetToken (valid 10 minutes) for /auth/reset-password.
+        A code allows 5 wrong guesses.
+      parameters:
+      - description: Email, purpose and code
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.VerifyOTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Code accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.VerifyOTPResponse'
+              type: object
+        "400":
+          description: Malformed payload, or wrong, expired or used code
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "429":
+          description: Too many requests
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Verify a one-time code
       tags:
       - auth
   /courses:

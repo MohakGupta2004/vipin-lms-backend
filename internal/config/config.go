@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -27,6 +28,10 @@ type EnvConfig struct {
 	CDNDomain          string        `env:"CDN_DOMAIN"`          // Cloud CDN origin serving the bucket, e.g. https://cdn.example.com
 	CDNKeyName         string        `env:"CDN_KEY_NAME"`        // signed URL key name on the CDN backend bucket
 	CDNSigningKey      string        `env:"CDN_SIGNING_KEY"`     // base64url signed URL key secret
+	ResendAPIKey       string        `env:"RESEND_API_KEY"`
+	EmailFrom          string        `env:"EMAIL_FROM"`         // sender address; the display name is set by the email package
+	EmailRatePerSecond int           `env:"EMAIL_RATE_PER_SEC"` // cap on Resend API calls per second (Resend's default limit is 2)
+	TrustProxy         bool          `env:"TRUST_PROXY"`        // read the client IP from X-Forwarded-For; only behind a proxy that sets it
 }
 
 func MustLoad() EnvConfig {
@@ -87,6 +92,31 @@ func MustLoad() EnvConfig {
 	if cfg.GCSEnabled && cfg.TranscoderLocation == "" {
 		log.Fatal("TRANSCODER_LOCATION is not set but GCS_ENABLE is true")
 	}
+	cfg.ResendAPIKey = strings.TrimSpace(os.Getenv("RESEND_API_KEY"))
+	if cfg.ResendAPIKey == "" {
+		log.Fatal("RESEND_API_KEY is not set in the environment variables")
+	}
+	if !strings.HasPrefix(cfg.ResendAPIKey, "re_") {
+		log.Fatal("RESEND_API_KEY is invalid: Resend keys start with re_")
+	}
+	from := strings.TrimSpace(os.Getenv("EMAIL_FROM"))
+	if from == "" {
+		log.Fatal("EMAIL_FROM is not set in the environment variables")
+	}
+	// EMAIL_FROM may be a bare address or "Name <address>"; only the address is kept.
+	parsedFrom, err := mail.ParseAddress(from)
+	if err != nil {
+		log.Fatal("EMAIL_FROM is not a valid email address")
+	}
+	cfg.EmailFrom = parsedFrom.Address
+	cfg.EmailRatePerSecond = 2
+	if v := strings.TrimSpace(os.Getenv("EMAIL_RATE_PER_SEC")); v != "" {
+		cfg.EmailRatePerSecond, err = strconv.Atoi(v)
+		if err != nil || cfg.EmailRatePerSecond < 1 {
+			log.Fatal("EMAIL_RATE_PER_SEC must be a positive integer")
+		}
+	}
+	cfg.TrustProxy = strings.EqualFold(strings.TrimSpace(os.Getenv("TRUST_PROXY")), "true")
 	if cfg.DBUrl == "" {
 		log.Fatal("DATABASE_URL is not set in the environment variables")
 	}

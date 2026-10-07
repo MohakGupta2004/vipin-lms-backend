@@ -15,6 +15,7 @@ import (
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/cdn"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/config"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/database"
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/email"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/handlers"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/middleware"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
@@ -97,6 +98,7 @@ func main() {
 	noteRepo := models.NewNoteRepository(db)
 	quizRepo := models.NewQuizRepository(db)
 	videoRepo := models.NewVideoRepository(db)
+	otpRepo := models.NewOTPRepository(db)
 
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
@@ -121,11 +123,17 @@ func main() {
 	}
 	videoService := service.NewVideoService(videoRepo, lessonRepo, videoStore, videoEnqueuer, cdnSigner)
 
+	// emails are sent by a background worker pool so requests never wait on Resend
+	emailQueue := email.NewQueue(email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom, cfg.EmailRatePerSecond))
+	emailQueue.Start()
+	verificationService := service.NewVerificationService(userRepo, otpRepo, emailQueue, authService, cfg.JWTSecretKey)
+
 	// middlewares
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecretKey, authService, userRepo)
 
 	// handlerFunctions
 	authHandler := handlers.NewAuthHandler(userRepo, authService, cfg.CrossSiteCookies)
+	verificationHandler := handlers.NewVerificationHandler(verificationService)
 	postHandler := handlers.NewPostHandler(postService)
 	courseHandler := handlers.NewCourseHandler(courseService)
 	examHandler := handlers.NewExamHandler(examRepo)
@@ -146,6 +154,15 @@ func main() {
 	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.RefreshTokenHandler)
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.LogoutHandler) // no auth: must work with an expired session
 	mux.Handle("GET /api/v1/auth/me", authMiddleware.RequireAuth(http.HandlerFunc(authHandler.MeHandler)))
+
+	// email verification and password reset; each route has its own per-IP limit (requests per 15 minutes)
+	limit := func(n int) func(http.Handler) http.Handler {
+		return middleware.NewRateLimiter(ctx, n, 15*time.Minute, cfg.TrustProxy).Limit
+	}
+	mux.Handle("POST /api/v1/auth/verify-email", limit(5)(authMiddleware.RequireAuth(http.HandlerFunc(verificationHandler.SendVerificationEmail))))
+	mux.Handle("POST /api/v1/auth/forgot-password", limit(5)(http.HandlerFunc(verificationHandler.ForgotPassword)))
+	mux.Handle("POST /api/v1/auth/verify-otp", limit(15)(http.HandlerFunc(verificationHandler.VerifyOTP)))
+	mux.Handle("POST /api/v1/auth/reset-password", limit(10)(http.HandlerFunc(verificationHandler.ResetPassword)))
 
 	// user routes (admin only, checked in the service)
 	mux.Handle("GET /api/v1/users", authMiddleware.RequireAuth(http.HandlerFunc(userHandler.ListUsers)))
@@ -228,6 +245,13 @@ func main() {
 
 	if err := srv.Shutdown(srvShutdownCtx); err != nil {
 		logger.Error("server shutdown failed", "err", err)
+	}
+
+	// let queued emails finish sending before the process exits
+	emailShutdownCtx, cancelEmail := context.WithTimeout(context.Background(), serverShutdownTimeout)
+	defer cancelEmail()
+	if err := emailQueue.Shutdown(emailShutdownCtx); err != nil {
+		logger.Error("email queue did not drain", "err", err)
 	}
 
 	// ctx is already cancelled, so the transcode workers are stopping; wait for them before closing the DB
