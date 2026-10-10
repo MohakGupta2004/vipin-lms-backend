@@ -7,8 +7,15 @@ import (
 	"time"
 )
 
-// ErrQuizHasAttempts means the quiz's questions cannot be replaced because students already answered them.
-var ErrQuizHasAttempts = errors.New("this quiz already has attempts, so its questions cannot be changed; create a new quiz instead")
+// ErrQuizHasAttempts means the quiz's questions or type cannot be changed because students already attempted it.
+var ErrQuizHasAttempts = errors.New("this quiz already has attempts, so its questions or type cannot be changed; create a new quiz instead")
+
+const (
+	// QuizTypeMockTest is timed (optionally) and scored, with a pass mark.
+	QuizTypeMockTest = "mock_test"
+	// QuizTypePractice is untimed and unscored; answers and explanations are still revealed.
+	QuizTypePractice = "practice"
+)
 
 // Quiz is a set of single-choice questions on a lesson.
 type Quiz struct {
@@ -18,16 +25,18 @@ type Quiz struct {
 	CreatedBy     string     `json:"createdBy"`
 	Title         string     `json:"title"`
 	Description   string     `json:"description"`
+	Type          string     `json:"type"`         // mock_test or practice
 	TimeLimitSec  *int       `json:"timeLimitSec"` // nil = untimed
-	PassPercent   int        `json:"passPercent"`
+	PassPercent   *int       `json:"passPercent"`  // nil for practice sets
 	IsFree        bool       `json:"isFree"`
 	Status        string     `json:"status"`
 	QuestionCount int        `json:"questionCount"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	Questions     []Question `json:"questions,omitempty"`
+	// Locked is set for users previewing a course: they see the quiz but cannot open it.
+	Locked bool `json:"locked,omitempty"`
 
 	LessonPublished bool `json:"-"` // students may only see quizzes of published lessons
-	LessonFree      bool `json:"-"` // quizzes of free lessons are open to users previewing the course
 }
 
 // Question is one question of a quiz. Explanation is only sent to the instructor before submission.
@@ -54,9 +63,9 @@ type QuizAttempt struct {
 	UserID      string          `json:"userId"`
 	StartedAt   time.Time       `json:"startedAt"`
 	SubmittedAt time.Time       `json:"submittedAt"`
-	Score       int             `json:"score"`
-	Total       int             `json:"total"`
-	Passed      bool            `json:"passed"`
+	Score       *int            `json:"score"`  // nil for practice sets
+	Total       *int            `json:"total"`  // nil for practice sets
+	Passed      *bool           `json:"passed"` // nil for practice sets
 	Answers     []AttemptAnswer `json:"answers,omitempty"`
 }
 
@@ -89,11 +98,11 @@ func (r *QuizRepository) CreateQuiz(ctx context.Context, q *Quiz) error {
 	// Rollback does nothing if Commit already succeeded.
 	defer tx.Rollback()
 
-	query := `INSERT INTO quizzes (course_id, lesson_id, created_by, title, description, time_limit_sec, pass_percent, is_free, status)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9)
+	query := `INSERT INTO quizzes (course_id, lesson_id, created_by, title, description, type, time_limit_sec, pass_percent, is_free, status)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10)
 		RETURNING id, created_at`
 	err = tx.QueryRowContext(ctx, query, q.CourseID, q.LessonID, q.CreatedBy, q.Title, q.Description,
-		q.TimeLimitSec, q.PassPercent, q.IsFree, q.Status).Scan(&q.ID, &q.CreatedAt)
+		q.Type, q.TimeLimitSec, q.PassPercent, q.IsFree, q.Status).Scan(&q.ID, &q.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -131,8 +140,9 @@ func insertQuestions(ctx context.Context, tx *sql.Tx, quizID string, questions [
 
 // UpdateQuiz saves a quiz's details. When replaceQuestions is set, its questions are swapped for
 // q.Questions, which is refused with ErrQuizHasAttempts once anyone has attempted the quiz.
+// Changing the quiz's type (typeChanged) is refused the same way.
 // It returns sql.ErrNoRows if the quiz does not exist.
-func (r *QuizRepository) UpdateQuiz(ctx context.Context, q *Quiz, replaceQuestions bool) error {
+func (r *QuizRepository) UpdateQuiz(ctx context.Context, q *Quiz, replaceQuestions, typeChanged bool) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -148,14 +158,14 @@ func (r *QuizRepository) UpdateQuiz(ctx context.Context, q *Quiz, replaceQuestio
 	}
 
 	query := `UPDATE quizzes SET title = $1, description = NULLIF($2, ''), time_limit_sec = $3,
-			pass_percent = $4, is_free = $5, status = $6
-		WHERE id = $7`
-	_, err = tx.ExecContext(ctx, query, q.Title, q.Description, q.TimeLimitSec, q.PassPercent, q.IsFree, q.Status, q.ID)
+			pass_percent = $4, is_free = $5, status = $6, type = $7
+		WHERE id = $8`
+	_, err = tx.ExecContext(ctx, query, q.Title, q.Description, q.TimeLimitSec, q.PassPercent, q.IsFree, q.Status, q.Type, q.ID)
 	if err != nil {
 		return err
 	}
 
-	if replaceQuestions {
+	if replaceQuestions || typeChanged {
 		var hasAttempts bool
 		err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM quiz_attempts WHERE quiz_id = $1)", q.ID).Scan(&hasAttempts)
 		if err != nil {
@@ -164,6 +174,9 @@ func (r *QuizRepository) UpdateQuiz(ctx context.Context, q *Quiz, replaceQuestio
 		if hasAttempts {
 			return ErrQuizHasAttempts
 		}
+	}
+
+	if replaceQuestions {
 		// Options go with their questions (ON DELETE CASCADE).
 		if _, err := tx.ExecContext(ctx, "DELETE FROM questions WHERE quiz_id = $1", q.ID); err != nil {
 			return err
@@ -184,22 +197,26 @@ func (r *QuizRepository) SoftDelete(ctx context.Context, quizID string) error {
 }
 
 const quizSelect = `SELECT q.id, q.course_id, q.lesson_id, q.created_by, q.title, COALESCE(q.description, ''),
-		q.time_limit_sec, q.pass_percent, q.is_free, q.status,
-		(SELECT COUNT(*) FROM questions qu WHERE qu.quiz_id = q.id), q.created_at, l.is_published, l.is_free
+		q.type, q.time_limit_sec, q.pass_percent, q.is_free, q.status,
+		(SELECT COUNT(*) FROM questions qu WHERE qu.quiz_id = q.id), q.created_at, l.is_published
 	FROM quizzes q
 	JOIN lessons l ON l.id = q.lesson_id AND l.deleted_at IS NULL
 	WHERE q.deleted_at IS NULL`
 
 func scanQuiz(row interface{ Scan(...any) error }, q *Quiz) error {
-	var timeLimit sql.NullInt32
+	var timeLimit, passPercent sql.NullInt32
 	err := row.Scan(&q.ID, &q.CourseID, &q.LessonID, &q.CreatedBy, &q.Title, &q.Description,
-		&timeLimit, &q.PassPercent, &q.IsFree, &q.Status, &q.QuestionCount, &q.CreatedAt, &q.LessonPublished, &q.LessonFree)
+		&q.Type, &timeLimit, &passPercent, &q.IsFree, &q.Status, &q.QuestionCount, &q.CreatedAt, &q.LessonPublished)
 	if err != nil {
 		return err
 	}
 	if timeLimit.Valid {
 		v := int(timeLimit.Int32)
 		q.TimeLimitSec = &v
+	}
+	if passPercent.Valid {
+		v := int(passPercent.Int32)
+		q.PassPercent = &v
 	}
 	return nil
 }
@@ -220,12 +237,13 @@ func (r *QuizRepository) UpdateStatus(ctx context.Context, quizID, status string
 }
 
 // ListByLesson returns a lesson's quizzes, oldest first. Drafts are left out unless includeDrafts is set.
-func (r *QuizRepository) ListByLesson(ctx context.Context, lessonID string, includeDrafts bool) ([]Quiz, error) {
+// A non-empty quizType keeps only quizzes of that type.
+func (r *QuizRepository) ListByLesson(ctx context.Context, lessonID string, includeDrafts bool, quizType string) ([]Quiz, error) {
 	query := quizSelect + `
-		AND q.lesson_id = $1 AND ($2 OR q.status = 'published')
+		AND q.lesson_id = $1 AND ($2 OR q.status = 'published') AND ($3 = '' OR q.type = $3)
 		ORDER BY q.created_at, q.id`
 
-	rows, err := r.db.QueryContext(ctx, query, lessonID, includeDrafts)
+	rows, err := r.db.QueryContext(ctx, query, lessonID, includeDrafts, quizType)
 	if err != nil {
 		return nil, err
 	}
@@ -323,9 +341,22 @@ func (r *QuizRepository) ListAttempts(ctx context.Context, quizID, userID string
 	attempts := []QuizAttempt{}
 	for rows.Next() {
 		var a QuizAttempt
-		err := rows.Scan(&a.ID, &a.QuizID, &a.UserID, &a.StartedAt, &a.SubmittedAt, &a.Score, &a.Total, &a.Passed)
+		var score, total sql.NullInt32
+		var passed sql.NullBool
+		err := rows.Scan(&a.ID, &a.QuizID, &a.UserID, &a.StartedAt, &a.SubmittedAt, &score, &total, &passed)
 		if err != nil {
 			return nil, err
+		}
+		if score.Valid {
+			v := int(score.Int32)
+			a.Score = &v
+		}
+		if total.Valid {
+			v := int(total.Int32)
+			a.Total = &v
+		}
+		if passed.Valid {
+			a.Passed = &passed.Bool
 		}
 		attempts = append(attempts, a)
 	}

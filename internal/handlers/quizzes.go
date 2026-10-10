@@ -17,8 +17,9 @@ const (
 type CreateQuizRequest struct {
 	Title        string                  `json:"title"`
 	Description  string                  `json:"description"`
-	TimeLimitSec *int                    `json:"timeLimitSec"` // omit for an untimed quiz
-	PassPercent  *int                    `json:"passPercent"`  // defaults to 70
+	Type         string                  `json:"type"`         // mock_test or practice, defaults to mock_test
+	TimeLimitSec *int                    `json:"timeLimitSec"` // mock_test only; omit for an untimed quiz
+	PassPercent  *int                    `json:"passPercent"`  // mock_test only; defaults to 70
 	IsFree       bool                    `json:"isFree"`
 	Status       string                  `json:"status"` // draft or published, defaults to published
 	Questions    []CreateQuestionRequest `json:"questions"`
@@ -40,6 +41,7 @@ type CreateOptionRequest struct {
 type UpdateQuizRequest struct {
 	Title        *string                  `json:"title"`
 	Description  *string                  `json:"description"`
+	Type         *string                  `json:"type"`
 	TimeLimitSec *int                     `json:"timeLimitSec"`
 	PassPercent  *int                     `json:"passPercent"`
 	IsFree       *bool                    `json:"isFree"`
@@ -73,7 +75,7 @@ func NewQuizHandler(quizService *service.QuizService) *QuizHandler {
 // CreateQuiz godoc
 //
 //	@Summary		Create a quiz on a lesson
-//	@Description	Course owner (instructor or admin) creates a quiz with all its questions and options in one request, on a lesson of their course. Each question needs 2 to 10 options with exactly one correct. Questions and options keep the order they are sent in. Published by default.
+//	@Description	Course owner (instructor or admin) creates a quiz with all its questions and options in one request, on a lesson of their course. Each question needs 2 to 10 options with exactly one correct. Questions and options keep the order they are sent in. Published by default. type is mock_test (default: optional timeLimitSec, passPercent defaults to 70, graded with marks) or practice (untimed, no marks; timeLimitSec and passPercent must be omitted).
 //	@Tags			quizzes
 //	@Accept			json
 //	@Produce		json
@@ -103,6 +105,7 @@ func (h *QuizHandler) CreateQuiz(w http.ResponseWriter, r *http.Request) {
 	in := service.CreateQuizInput{
 		Title:        req.Title,
 		Description:  req.Description,
+		Type:         req.Type,
 		TimeLimitSec: req.TimeLimitSec,
 		PassPercent:  req.PassPercent,
 		IsFree:       req.IsFree,
@@ -140,7 +143,7 @@ func questionInputs(req []CreateQuestionRequest) []service.CreateQuestionInput {
 // UpdateQuiz godoc
 //
 //	@Summary		Edit a quiz
-//	@Description	Course owner (instructor or admin) changes only the fields that are sent. timeLimitSec 0 makes the quiz untimed. Sending questions replaces all of them, which is refused once any student has attempted the quiz. Returns the quiz with its questions and answers.
+//	@Description	Course owner (instructor or admin) changes only the fields that are sent. timeLimitSec 0 makes the quiz untimed. Sending questions replaces all of them, which is refused once any student has attempted the quiz. Changing type resets timeLimitSec and passPercent to the new type's defaults and, like replacing questions, is refused once any student has attempted the quiz. Returns the quiz with its questions and answers.
 //	@Tags			quizzes
 //	@Accept			json
 //	@Produce		json
@@ -151,7 +154,7 @@ func questionInputs(req []CreateQuestionRequest) []service.CreateQuestionInput {
 //	@Failure		401		{object}	utils.JSONResponse						"Not logged in"
 //	@Failure		403		{object}	utils.JSONResponse						"Not an instructor or admin"
 //	@Failure		404		{object}	utils.JSONResponse						"Quiz not found, or not in a course this user owns"
-//	@Failure		409		{object}	utils.JSONResponse						"Questions cannot change: the quiz already has attempts"
+//	@Failure		409		{object}	utils.JSONResponse						"Questions or type cannot change: the quiz already has attempts"
 //	@Failure		500		{object}	utils.JSONResponse						"Internal server error"
 //	@Router			/quizzes/{id} [patch]
 func (h *QuizHandler) UpdateQuiz(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +174,7 @@ func (h *QuizHandler) UpdateQuiz(w http.ResponseWriter, r *http.Request) {
 	in := service.UpdateQuizInput{
 		Title:        req.Title,
 		Description:  req.Description,
+		Type:         req.Type,
 		TimeLimitSec: req.TimeLimitSec,
 		PassPercent:  req.PassPercent,
 		IsFree:       req.IsFree,
@@ -257,12 +261,14 @@ func (h *QuizHandler) UpdateQuizStatus(w http.ResponseWriter, r *http.Request) {
 // ListQuizzes godoc
 //
 //	@Summary		List a lesson's quizzes
-//	@Description	Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users previewing a published course only see free quizzes, or every quiz of a free lesson.
+//	@Description	Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users previewing a published course see them too, with locked set on those not marked free (a free lesson does not unlock its quizzes). Filter with ?type=mock_test or ?type=practice.
 //	@Tags			quizzes
 //	@Produce		json
 //	@Param			id	path		string									true	"Lesson ID"
+//	@Param			type	query		string									false	"mock_test or practice; omit for both"
 //	@Success		200	{object}	utils.JSONResponse{data=[]models.Quiz}	"Quizzes"
 //	@Failure		401	{object}	utils.JSONResponse						"Not logged in"
+//	@Failure		400	{object}	utils.JSONResponse						"Invalid type filter"
 //	@Failure		403	{object}	utils.JSONResponse						"Not enrolled in this course"
 //	@Failure		404	{object}	utils.JSONResponse						"Lesson not found"
 //	@Failure		500	{object}	utils.JSONResponse						"Internal server error"
@@ -274,7 +280,7 @@ func (h *QuizHandler) ListQuizzes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	quizzes, err := h.quizService.ListQuizzes(r.Context(), user, r.PathValue("id"))
+	quizzes, err := h.quizService.ListQuizzes(r.Context(), user, r.PathValue("id"), r.URL.Query().Get("type"))
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -312,7 +318,7 @@ func (h *QuizHandler) GetQuiz(w http.ResponseWriter, r *http.Request) {
 // SubmitAttempt godoc
 //
 //	@Summary		Submit answers to a quiz
-//	@Description	Student sends all answers in one request and gets the graded result back, with the correct option and explanation for every question. Questions left out count as skipped (wrong). Every submission is saved as a new attempt.
+//	@Description	Student sends all answers in one request and gets the graded result back, with the correct option and explanation for every question. Questions left out count as skipped (wrong). Every submission is saved as a new attempt. For a practice set there are no marks: only the answered questions are graded (at least one is required) and score, total and passed are null, so the frontend can check one question at a time.
 //	@Tags			quizzes
 //	@Accept			json
 //	@Produce		json

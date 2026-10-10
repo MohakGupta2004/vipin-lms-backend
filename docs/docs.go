@@ -906,7 +906,7 @@ const docTemplate = `{
         },
         "/courses/{id}/lessons": {
             "get": {
-                "description": "Returns the course's lessons (chapters) in order, each with its PDF notes. The course instructor and enrolled students (or anyone, for a free course) see it in full; students see published lessons only. Other logged-in users previewing a published course get every published lesson, with notes only on free lessons and locked=true on the rest.",
+                "description": "Returns the course's lessons (chapters) in order, each with its PDF notes. The course instructor and enrolled students (or anyone, for a free course) see it in full; students see published lessons only. Other logged-in users previewing a published course get every published lesson with all its notes; paid lessons and notes not marked free come back with locked=true.",
                 "produces": [
                     "application/json"
                 ],
@@ -1055,7 +1055,7 @@ const docTemplate = `{
         },
         "/courses/{id}/notes": {
             "get": {
-                "description": "Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. The course instructor and enrolled students see all of them; users previewing a published course only the notes of free lessons.",
+                "description": "Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. The course instructor and enrolled students see all of them; users previewing a published course see them too, with locked set on those not marked free (a free lesson does not unlock its notes).",
                 "produces": [
                     "application/json"
                 ],
@@ -1730,7 +1730,7 @@ const docTemplate = `{
         },
         "/lessons/{id}/notes": {
             "post": {
-                "description": "Course owner (instructor or admin) uploads a PDF note to a lesson of their course. Max 25 MB.",
+                "description": "Course owner (instructor or admin) uploads a PDF note to a lesson of their course. Max 25 MB. isFree lets users previewing the course open it even when its lesson is paid.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -1760,6 +1760,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Short description (max 2000 characters)",
                         "name": "description",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Free preview: open without enrolling (default false)",
+                        "name": "isFree",
                         "in": "formData"
                     },
                     {
@@ -1830,7 +1836,7 @@ const docTemplate = `{
         },
         "/lessons/{id}/quizzes": {
             "get": {
-                "description": "Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users previewing a published course only see free quizzes, or every quiz of a free lesson.",
+                "description": "Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users previewing a published course see them too, with locked set on those not marked free (a free lesson does not unlock its quizzes). Filter with ?type=mock_test or ?type=practice.",
                 "produces": [
                     "application/json"
                 ],
@@ -1845,6 +1851,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "mock_test or practice; omit for both",
+                        "name": "type",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1867,6 +1879,12 @@ const docTemplate = `{
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid type filter",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
                         }
                     },
                     "401": {
@@ -1896,7 +1914,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Course owner (instructor or admin) creates a quiz with all its questions and options in one request, on a lesson of their course. Each question needs 2 to 10 options with exactly one correct. Questions and options keep the order they are sent in. Published by default.",
+                "description": "Course owner (instructor or admin) creates a quiz with all its questions and options in one request, on a lesson of their course. Each question needs 2 to 10 options with exactly one correct. Questions and options keep the order they are sent in. Published by default. type is mock_test (default: optional timeLimitSec, passPercent defaults to 70, graded with marks) or practice (untimed, no marks; timeLimitSec and passPercent must be omitted).",
                 "consumes": [
                     "application/json"
                 ],
@@ -2259,11 +2277,92 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "patch": {
+                "description": "Course owner (instructor or admin) edits a note's title, description, or whether it is free. Free notes open for users previewing the course without enrolling. Only the fields that are sent change; the PDF itself cannot be replaced.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notes"
+                ],
+                "summary": "Edit a note",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Note ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateNoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Note updated",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Note"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or invalid fields",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an instructor or admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Note not found, or not in a course this user owns",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
             }
         },
         "/notes/{id}/file": {
             "get": {
-                "description": "Streams the PDF. The course instructor and enrolled students can download it; users previewing a published course only if its lesson is free.",
+                "description": "Streams the PDF. The course instructor and enrolled students can download it; users previewing a published course only if the note is marked free.",
                 "produces": [
                     "application/pdf"
                 ],
@@ -2636,7 +2735,7 @@ const docTemplate = `{
                 }
             },
             "patch": {
-                "description": "Course owner (instructor or admin) changes only the fields that are sent. timeLimitSec 0 makes the quiz untimed. Sending questions replaces all of them, which is refused once any student has attempted the quiz. Returns the quiz with its questions and answers.",
+                "description": "Course owner (instructor or admin) changes only the fields that are sent. timeLimitSec 0 makes the quiz untimed. Sending questions replaces all of them, which is refused once any student has attempted the quiz. Changing type resets timeLimitSec and passPercent to the new type's defaults and, like replacing questions, is refused once any student has attempted the quiz. Returns the quiz with its questions and answers.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2709,7 +2808,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Questions cannot change: the quiz already has attempts",
+                        "description": "Questions or type cannot change: the quiz already has attempts",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -2791,7 +2890,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Student sends all answers in one request and gets the graded result back, with the correct option and explanation for every question. Questions left out count as skipped (wrong). Every submission is saved as a new attempt.",
+                "description": "Student sends all answers in one request and gets the graded result back, with the correct option and explanation for every question. Questions left out count as skipped (wrong). Every submission is saved as a new attempt. For a practice set there are no marks: only the answered questions are graded (at least one is required) and score, total and passed are null, so the frontend can check one question at a time.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3426,7 +3525,7 @@ const docTemplate = `{
         },
         "/videos/{id}/stream": {
             "get": {
-                "description": "Returns a signed HLS manifest URL, valid for 15 minutes, that any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is: every playlist and segment URL inside it is already signed. queryParams is the bare signature. Refetch before expiresAt. Free videos (or videos of free lessons) in published courses, and every video of a free course, are open to any logged-in user; everything else needs the course owner or an enrolled student.",
+                "description": "Returns a signed HLS manifest URL, valid for 15 minutes, that any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is: every playlist and segment URL inside it is already signed. queryParams is the bare signature. Refetch before expiresAt. Videos marked free in published courses (a free lesson does not unlock its videos), and every video of a free course, are open to any logged-in user; everything else needs the course owner or an enrolled student.",
                 "produces": [
                     "application/json"
                 ],
@@ -3618,7 +3717,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "passPercent": {
-                    "description": "defaults to 70",
+                    "description": "mock_test only; defaults to 70",
                     "type": "integer"
                 },
                 "questions": {
@@ -3632,10 +3731,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "timeLimitSec": {
-                    "description": "omit for an untimed quiz",
+                    "description": "mock_test only; omit for an untimed quiz",
                     "type": "integer"
                 },
                 "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "mock_test or practice, defaults to mock_test",
                     "type": "string"
                 }
             }
@@ -3767,6 +3870,21 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.UpdateNoteRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "isFree": {
+                    "description": "open to users previewing the course",
+                    "type": "boolean"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.UpdateQuizRequest": {
             "type": "object",
             "properties": {
@@ -3792,6 +3910,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "title": {
+                    "type": "string"
+                },
+                "type": {
                     "type": "string"
                 }
             }
@@ -4146,8 +4267,16 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "isFree": {
+                    "description": "open to users previewing the course; a free lesson does not make its notes free",
+                    "type": "boolean"
+                },
                 "lessonId": {
                     "type": "string"
+                },
+                "locked": {
+                    "description": "Locked is set for users previewing a course: they see the note but cannot open it.",
+                    "type": "boolean"
                 },
                 "sizeBytes": {
                     "type": "integer"
@@ -4259,7 +4388,12 @@ const docTemplate = `{
                 "lessonId": {
                     "type": "string"
                 },
+                "locked": {
+                    "description": "Locked is set for users previewing a course: they see the quiz but cannot open it.",
+                    "type": "boolean"
+                },
                 "passPercent": {
+                    "description": "nil for practice sets",
                     "type": "integer"
                 },
                 "questionCount": {
@@ -4280,6 +4414,10 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                },
+                "type": {
+                    "description": "mock_test or practice",
+                    "type": "string"
                 }
             }
         },
@@ -4296,12 +4434,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "passed": {
+                    "description": "nil for practice sets",
                     "type": "boolean"
                 },
                 "quizId": {
                     "type": "string"
                 },
                 "score": {
+                    "description": "nil for practice sets",
                     "type": "integer"
                 },
                 "startedAt": {
@@ -4311,6 +4451,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "total": {
+                    "description": "nil for practice sets",
                     "type": "integer"
                 },
                 "userId": {

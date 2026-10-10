@@ -27,7 +27,7 @@ const (
 var (
 	// ErrQuizNotFound means the quiz does not exist, or the user may not see it.
 	ErrQuizNotFound = errors.New("quiz not found")
-	// ErrQuizHasAttempts means the questions cannot be replaced because students already answered them.
+	// ErrQuizHasAttempts means the questions or type cannot be changed because students already attempted the quiz.
 	ErrQuizHasAttempts = models.ErrQuizHasAttempts
 )
 
@@ -35,8 +35,9 @@ var (
 type CreateQuizInput struct {
 	Title        string
 	Description  string
-	TimeLimitSec *int
-	PassPercent  *int // nil = 70
+	Type         string // "" = mock_test
+	TimeLimitSec *int   // mock_test only
+	PassPercent  *int   // mock_test only, nil = 70
 	IsFree       bool
 	Status       string // "" = published
 	Questions    []CreateQuestionInput
@@ -47,6 +48,7 @@ type CreateQuizInput struct {
 type UpdateQuizInput struct {
 	Title        *string
 	Description  *string
+	Type         *string
 	TimeLimitSec *int
 	PassPercent  *int
 	IsFree       *bool
@@ -127,13 +129,18 @@ func buildQuiz(in CreateQuizInput) (*models.Quiz, error) {
 	quiz := &models.Quiz{
 		Title:        strings.TrimSpace(in.Title),
 		Description:  strings.TrimSpace(in.Description),
+		Type:         strings.TrimSpace(in.Type),
 		TimeLimitSec: in.TimeLimitSec,
-		PassPercent:  defaultPassPercent,
+		PassPercent:  in.PassPercent,
 		IsFree:       in.IsFree,
 		Status:       strings.TrimSpace(in.Status),
 	}
-	if in.PassPercent != nil {
-		quiz.PassPercent = *in.PassPercent
+	if quiz.Type == "" {
+		quiz.Type = models.QuizTypeMockTest
+	}
+	if quiz.Type == models.QuizTypeMockTest && quiz.PassPercent == nil {
+		pass := defaultPassPercent
+		quiz.PassPercent = &pass
 	}
 	if quiz.Status == "" {
 		quiz.Status = "published"
@@ -159,9 +166,15 @@ func validateQuizDetails(quiz *models.Quiz) error {
 		return fmt.Errorf("%w: title must be at most %d characters", ErrInvalidInput, maxQuizTitleLength)
 	case utf8.RuneCountInString(quiz.Description) > maxQuizDescriptionLength:
 		return fmt.Errorf("%w: description must be at most %d characters", ErrInvalidInput, maxQuizDescriptionLength)
+	case quiz.Type != models.QuizTypeMockTest && quiz.Type != models.QuizTypePractice:
+		return fmt.Errorf("%w: type must be mock_test or practice", ErrInvalidInput)
+	case quiz.Type == models.QuizTypePractice && quiz.TimeLimitSec != nil:
+		return fmt.Errorf("%w: practice sets have no time limit", ErrInvalidInput)
+	case quiz.Type == models.QuizTypePractice && quiz.PassPercent != nil:
+		return fmt.Errorf("%w: practice sets have no pass percent", ErrInvalidInput)
 	case quiz.TimeLimitSec != nil && (*quiz.TimeLimitSec < 1 || *quiz.TimeLimitSec > maxTimeLimitSec):
 		return fmt.Errorf("%w: timeLimitSec must be between 1 and %d", ErrInvalidInput, maxTimeLimitSec)
-	case quiz.PassPercent < 0 || quiz.PassPercent > 100:
+	case quiz.PassPercent != nil && (*quiz.PassPercent < 0 || *quiz.PassPercent > 100):
 		return fmt.Errorf("%w: passPercent must be between 0 and 100", ErrInvalidInput)
 	case quiz.Status != "draft" && quiz.Status != "published":
 		return fmt.Errorf("%w: status must be draft or published", ErrInvalidInput)
@@ -272,6 +285,21 @@ func (s *QuizService) UpdateQuiz(ctx context.Context, user *models.User, quizID 
 	if in.Description != nil {
 		quiz.Description = strings.TrimSpace(*in.Description)
 	}
+	// A type switch resets the type-specific fields; fields sent in the same request are applied on top.
+	typeChanged := false
+	if in.Type != nil {
+		newType := strings.TrimSpace(*in.Type)
+		if newType != quiz.Type {
+			typeChanged = true
+			quiz.Type = newType
+			quiz.TimeLimitSec = nil
+			quiz.PassPercent = nil
+			if newType == models.QuizTypeMockTest {
+				pass := defaultPassPercent
+				quiz.PassPercent = &pass
+			}
+		}
+	}
 	if in.TimeLimitSec != nil {
 		quiz.TimeLimitSec = in.TimeLimitSec
 		if *in.TimeLimitSec == 0 {
@@ -279,7 +307,7 @@ func (s *QuizService) UpdateQuiz(ctx context.Context, user *models.User, quizID 
 		}
 	}
 	if in.PassPercent != nil {
-		quiz.PassPercent = *in.PassPercent
+		quiz.PassPercent = in.PassPercent
 	}
 	if in.IsFree != nil {
 		quiz.IsFree = *in.IsFree
@@ -299,7 +327,7 @@ func (s *QuizService) UpdateQuiz(ctx context.Context, user *models.User, quizID 
 		}
 	}
 
-	err = s.quizRepo.UpdateQuiz(ctx, quiz, replaceQuestions)
+	err = s.quizRepo.UpdateQuiz(ctx, quiz, replaceQuestions, typeChanged)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrQuizNotFound
 	}
@@ -345,10 +373,14 @@ func (s *QuizService) ownedQuiz(ctx context.Context, user *models.User, quizID s
 	return quiz, nil
 }
 
-// ListQuizzes returns a lesson's quizzes, without questions, for the instructor or an enrolled student
-// (previewers: only the free ones).
+// ListQuizzes returns a lesson's quizzes, without questions, for the instructor or an enrolled student.
+// Previewers get them too, with locked set on those they cannot open. A non-empty quizType keeps
+// only quizzes of that type.
 // Students only see published quizzes of published lessons.
-func (s *QuizService) ListQuizzes(ctx context.Context, user *models.User, lessonID string) ([]models.Quiz, error) {
+func (s *QuizService) ListQuizzes(ctx context.Context, user *models.User, lessonID, quizType string) ([]models.Quiz, error) {
+	if quizType != "" && quizType != models.QuizTypeMockTest && quizType != models.QuizTypePractice {
+		return nil, fmt.Errorf("%w: type must be mock_test or practice", ErrInvalidInput)
+	}
 	if !uuidPattern.MatchString(lessonID) {
 		return nil, ErrLessonNotFound
 	}
@@ -370,18 +402,15 @@ func (s *QuizService) ListQuizzes(ctx context.Context, user *models.User, lesson
 	if !isTeacher && !lesson.IsPublished {
 		return nil, ErrLessonNotFound
 	}
-	quizzes, err := s.quizRepo.ListByLesson(ctx, lessonID, isTeacher)
+	quizzes, err := s.quizRepo.ListByLesson(ctx, lessonID, isTeacher, quizType)
 	if err != nil || !preview {
 		return quizzes, err
 	}
-	// Previewers only see free quizzes, or every quiz of a free lesson.
-	free := quizzes[:0]
-	for _, q := range quizzes {
-		if q.IsFree || lesson.IsFree {
-			free = append(free, q)
-		}
+	// Previewers see every quiz, but can only open those marked free; a free lesson does not unlock them.
+	for i := range quizzes {
+		quizzes[i].Locked = !quizzes[i].IsFree
 	}
-	return free, nil
+	return quizzes, nil
 }
 
 // GetQuiz returns a quiz with its questions. The instructor sees the correct options and explanations;
@@ -408,7 +437,9 @@ func (s *QuizService) GetQuiz(ctx context.Context, user *models.User, quizID str
 }
 
 // SubmitAttempt grades a student's answers to a quiz in one go and saves the attempt.
-// Questions left out of answers count as skipped (wrong). The result reveals the correct
+// Mock test: questions left out of answers count as skipped (wrong), and the attempt gets a score
+// and pass mark. Practice set: only the answered questions are graded, without marks, so the
+// student can check a few questions at a time. Either way the result reveals the correct
 // options and explanations.
 func (s *QuizService) SubmitAttempt(ctx context.Context, user *models.User, quizID string, answers []SubmitAnswerInput) (*models.QuizAttempt, error) {
 	if user.Role != models.RoleStudent {
@@ -452,32 +483,12 @@ func (s *QuizService) SubmitAttempt(ctx context.Context, user *models.User, quiz
 		}
 		selected[questionID] = optionID
 	}
+	if quiz.Type == models.QuizTypePractice && len(selected) == 0 {
+		return nil, fmt.Errorf("%w: answer at least one question", ErrInvalidInput)
+	}
 
-	attempt := &models.QuizAttempt{
-		QuizID: quiz.ID,
-		UserID: user.ID,
-		Total:  len(questions),
-	}
-	for _, q := range questions {
-		answer := models.AttemptAnswer{
-			QuestionID:  q.ID,
-			Explanation: q.Explanation,
-		}
-		for _, o := range q.Options {
-			if *o.IsCorrect {
-				answer.CorrectOptionID = o.ID
-			}
-		}
-		if optionID, ok := selected[q.ID]; ok {
-			answer.SelectedOptionID = &optionID
-			answer.IsCorrect = options[q.ID][optionID]
-		}
-		if answer.IsCorrect {
-			attempt.Score++
-		}
-		attempt.Answers = append(attempt.Answers, answer)
-	}
-	attempt.Passed = attempt.Score*100 >= quiz.PassPercent*attempt.Total
+	attempt := gradeAttempt(quiz, questions, selected)
+	attempt.UserID = user.ID
 
 	if err := s.quizRepo.CreateAttempt(ctx, attempt); err != nil {
 		return nil, err
@@ -499,7 +510,7 @@ func (s *QuizService) ListAttempts(ctx context.Context, user *models.User, quizI
 
 // authorizeQuiz loads a quiz the user may see: the course's instructor sees every quiz, an enrolled
 // student only published quizzes of published lessons, and a user previewing the course only those
-// that are free (or in a free lesson). Anything else looks like a missing quiz.
+// that are marked free. Anything else looks like a missing quiz.
 func (s *QuizService) authorizeQuiz(ctx context.Context, user *models.User, quizID string) (*models.Quiz, bool, error) {
 	if !uuidPattern.MatchString(quizID) {
 		return nil, false, ErrQuizNotFound
@@ -522,8 +533,50 @@ func (s *QuizService) authorizeQuiz(ctx context.Context, user *models.User, quiz
 	if !isTeacher && (quiz.Status != "published" || !quiz.LessonPublished) {
 		return nil, false, ErrQuizNotFound
 	}
-	if preview && !quiz.IsFree && !quiz.LessonFree {
+	if preview && !quiz.IsFree {
 		return nil, false, ErrQuizNotFound
 	}
 	return quiz, isTeacher, nil
+}
+
+// gradeAttempt grades the selected options (questionID -> optionID, already validated) against the
+// quiz's questions. A mock test grades every question and fills in score, total and passed; a
+// practice set only grades the questions that were answered and leaves the marks nil.
+func gradeAttempt(quiz *models.Quiz, questions []models.Question, selected map[string]string) *models.QuizAttempt {
+	practice := quiz.Type == models.QuizTypePractice
+	attempt := &models.QuizAttempt{QuizID: quiz.ID}
+	score := 0
+	for _, q := range questions {
+		optionID, answered := selected[q.ID]
+		if practice && !answered {
+			continue
+		}
+		answer := models.AttemptAnswer{
+			QuestionID:  q.ID,
+			Explanation: q.Explanation,
+		}
+		for _, o := range q.Options {
+			if *o.IsCorrect {
+				answer.CorrectOptionID = o.ID
+			}
+			if answered && o.ID == optionID {
+				answer.SelectedOptionID = &optionID
+				answer.IsCorrect = *o.IsCorrect
+			}
+		}
+		if answer.IsCorrect {
+			score++
+		}
+		attempt.Answers = append(attempt.Answers, answer)
+	}
+	if practice {
+		return attempt
+	}
+
+	total := len(questions)
+	passed := quiz.PassPercent != nil && score*100 >= *quiz.PassPercent*total
+	attempt.Score = &score
+	attempt.Total = &total
+	attempt.Passed = &passed
+	return attempt
 }

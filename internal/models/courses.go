@@ -138,13 +138,13 @@ func (r *CourseRepository) ListCatalog(ctx context.Context, userID string, freeO
 			         WHERE v.course_id = c.id AND v.status = 'ready' AND l.is_published) AS videos,
 			       (SELECT COUNT(*) FROM videos v JOIN lessons l ON l.id = v.lesson_id AND l.deleted_at IS NULL
 			         WHERE v.course_id = c.id AND v.status = 'ready' AND l.is_published
-			           AND (c.is_free OR v.is_free OR l.is_free)) AS free_videos,
+			           AND (c.is_free OR v.is_free)) AS free_videos,
 			       (SELECT COUNT(*) FROM notes n JOIN lessons l ON l.id = n.lesson_id AND l.deleted_at IS NULL
 			         WHERE n.course_id = c.id AND n.object_key IS NOT NULL AND n.visibility = 'course'
-			           AND n.deleted_at IS NULL AND l.is_published AND (c.is_free OR l.is_free)) AS free_notes,
+			           AND n.deleted_at IS NULL AND l.is_published AND (c.is_free OR n.is_free)) AS free_notes,
 			       (SELECT COUNT(*) FROM quizzes q JOIN lessons l ON l.id = q.lesson_id AND l.deleted_at IS NULL
 			         WHERE q.course_id = c.id AND q.deleted_at IS NULL AND q.status = 'published'
-			           AND l.is_published AND (c.is_free OR q.is_free OR l.is_free)) AS free_quizzes
+			           AND l.is_published AND (c.is_free OR q.is_free)) AS free_quizzes
 			FROM courses c
 			WHERE c.status = 'published' AND c.deleted_at IS NULL
 		)

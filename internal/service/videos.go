@@ -296,7 +296,7 @@ func (s *VideoService) watchableVideo(ctx context.Context, user *models.User, vi
 	if err != nil {
 		return nil, notFoundAs(err, ErrVideoNotFound)
 	}
-	if preview && !video.IsFree && !lesson.IsFree {
+	if preview && videoLocked(video) {
 		return nil, ErrVideoNotFound
 	}
 	if video.Status != "ready" || video.HLSPrefix == "" {
@@ -412,7 +412,7 @@ func (s *VideoService) ListLessonVideos(ctx context.Context, user *models.User, 
 		return videos, err
 	}
 	for i := range videos {
-		videos[i].Locked = !videos[i].IsFree && !lesson.IsFree
+		videos[i].Locked = videoLocked(&videos[i])
 	}
 	return videos, nil
 }
@@ -429,18 +429,16 @@ func (s *VideoService) ListCourseVideos(ctx context.Context, user *models.User, 
 	if err != nil || !preview {
 		return videos, err
 	}
-	lessons, err := s.lessonRepo.ListLessons(ctx, courseID, false)
-	if err != nil {
-		return nil, err
-	}
-	freeLesson := make(map[string]bool, len(lessons))
-	for _, l := range lessons {
-		freeLesson[l.ID] = l.IsFree
-	}
 	for i := range videos {
-		videos[i].Locked = !videos[i].IsFree && !freeLesson[videos[i].LessonID]
+		videos[i].Locked = videoLocked(&videos[i])
 	}
 	return videos, nil
+}
+
+// videoLocked reports whether a user previewing the course is shut out of a video: every video the
+// instructor has not marked free. The lesson's own free flag does not unlock its videos.
+func videoLocked(v *models.Video) bool {
+	return !v.IsFree
 }
 
 // courseAccess decides how a user may see a course's videos: in full (isTeacher, enrolled, or a free

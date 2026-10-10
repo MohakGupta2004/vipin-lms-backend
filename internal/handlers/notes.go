@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -21,7 +22,15 @@ const (
 	noteTransferTimeout = 2 * time.Minute            // server-wide timeouts are too short for a 25 MB file
 	defaultNoteLimit    = 50
 	maxNoteLimit        = 100
+	maxNoteUpdateBytes  = 16 << 10 // title and description with room for multi-byte text
 )
+
+// UpdateNoteRequest changes only the fields that are sent.
+type UpdateNoteRequest struct {
+	Title       *string `json:"title"`
+	Description *string `json:"description"`
+	IsFree      *bool   `json:"isFree"` // open to users previewing the course
+}
 
 type NoteHandler struct {
 	noteService *service.NoteService
@@ -36,13 +45,14 @@ func NewNoteHandler(noteService *service.NoteService) *NoteHandler {
 // UploadNote godoc
 //
 //	@Summary		Share a PDF note on a lesson
-//	@Description	Course owner (instructor or admin) uploads a PDF note to a lesson of their course. Max 25 MB.
+//	@Description	Course owner (instructor or admin) uploads a PDF note to a lesson of their course. Max 25 MB. isFree lets users previewing the course open it even when its lesson is paid.
 //	@Tags			notes
 //	@Accept			multipart/form-data
 //	@Produce		json
 //	@Param			id			path		string									true	"Lesson ID"
 //	@Param			title		formData	string									true	"Note title (max 200 characters)"
 //	@Param			description	formData	string									false	"Short description (max 2000 characters)"
+//	@Param			isFree		formData	bool									false	"Free preview: open without enrolling (default false)"
 //	@Param			file		formData	file									true	"PDF file"
 //	@Success		201			{object}	utils.JSONResponse{data=models.Note}	"Note uploaded"
 //	@Failure		400			{object}	utils.JSONResponse						"Invalid form, file is not a PDF, or too large"
@@ -79,8 +89,17 @@ func (h *NoteHandler) UploadNote(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	isFree := false
+	if v := r.FormValue("isFree"); v != "" {
+		isFree, err = strconv.ParseBool(v)
+		if err != nil {
+			utils.WriteJSONResponse(w, http.StatusBadRequest, "isFree must be true or false")
+			return
+		}
+	}
+
 	note, err := h.noteService.UploadNote(r.Context(), user, r.PathValue("id"),
-		r.FormValue("title"), r.FormValue("description"), header.Filename, file)
+		r.FormValue("title"), r.FormValue("description"), header.Filename, isFree, file)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -91,7 +110,7 @@ func (h *NoteHandler) UploadNote(w http.ResponseWriter, r *http.Request) {
 // ListNotes godoc
 //
 //	@Summary		List a course's notes
-//	@Description	Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. The course instructor and enrolled students see all of them; users previewing a published course only the notes of free lessons.
+//	@Description	Returns the PDF notes of a course, newest first, optionally for one lesson. For notes grouped by lesson use GET /courses/{id}/lessons. The course instructor and enrolled students see all of them; users previewing a published course see them too, with locked set on those not marked free (a free lesson does not unlock its notes).
 //	@Tags			notes
 //	@Produce		json
 //	@Param			id			path		string									true	"Course ID"
@@ -134,7 +153,7 @@ func (h *NoteHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
 // DownloadNote godoc
 //
 //	@Summary		Download a note
-//	@Description	Streams the PDF. The course instructor and enrolled students can download it; users previewing a published course only if its lesson is free.
+//	@Description	Streams the PDF. The course instructor and enrolled students can download it; users previewing a published course only if the note is marked free.
 //	@Tags			notes
 //	@Produce		application/pdf
 //	@Param			id	path		string				true	"Note ID"
@@ -170,6 +189,48 @@ func (h *NoteHandler) DownloadNote(w http.ResponseWriter, r *http.Request) {
 		// Headers are already sent, so all we can do is log.
 		slog.Error("note download interrupted", "noteId", note.ID, "err", err)
 	}
+}
+
+// UpdateNote godoc
+//
+//	@Summary		Edit a note
+//	@Description	Course owner (instructor or admin) edits a note's title, description, or whether it is free. Free notes open for users previewing the course without enrolling. Only the fields that are sent change; the PDF itself cannot be replaced.
+//	@Tags			notes
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string									true	"Note ID"
+//	@Param			request	body		UpdateNoteRequest						true	"Fields to change"
+//	@Success		200		{object}	utils.JSONResponse{data=models.Note}	"Note updated"
+//	@Failure		400		{object}	utils.JSONResponse						"Malformed payload or invalid fields"
+//	@Failure		401		{object}	utils.JSONResponse						"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse						"Not an instructor or admin"
+//	@Failure		404		{object}	utils.JSONResponse						"Note not found, or not in a course this user owns"
+//	@Failure		500		{object}	utils.JSONResponse						"Internal server error"
+//	@Router			/notes/{id} [patch]
+func (h *NoteHandler) UpdateNote(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxNoteUpdateBytes)
+	var req UpdateNoteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
+		return
+	}
+
+	note, err := h.noteService.UpdateNote(r.Context(), user, r.PathValue("id"), service.UpdateNoteInput{
+		Title:       req.Title,
+		Description: req.Description,
+		IsFree:      req.IsFree,
+	})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, note)
 }
 
 // DeleteNote godoc

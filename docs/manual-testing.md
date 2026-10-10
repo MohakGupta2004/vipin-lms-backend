@@ -23,7 +23,7 @@ When you are not the owner, you get the same response as for a missing resource.
 ## 0. Setup
 
 ```bash
-make migrate-up        # applies 24_quizzes_soft_delete and 25_courses_slug_unique_active
+make migrate-up        # applies all migrations, up to 30_notes_is_free
 make run               # or: make air
 
 export B=http://localhost:8080/api/v1   # use your PORT
@@ -241,6 +241,48 @@ Recreate a quiz first if you already deleted `L1`.
 
 ---
 
+## 10a. Quiz types: mock tests and practice sets (new)
+
+`type` is `mock_test` (default: optional `timeLimitSec`, `passPercent` defaults to 70, graded with marks) or `practice` (untimed, no marks; `timeLimitSec`/`passPercent` must be omitted). Practice submit grades only the answered questions, so the frontend can check one question at a time.
+
+| # | Request | Expect |
+|---|---------|--------|
+| 10a.1 | Create a quiz with `"type":"practice"` and questions | `201`, `type: practice`, `timeLimitSec`/`passPercent` null |
+| 10a.2 | Same with `"timeLimitSec":60` | `400` |
+| 10a.3 | `GET $B/lessons/$L1/quizzes?type=practice` | Only practice quizzes |
+| 10a.4 | `GET $B/lessons/$L1/quizzes?type=bogus` | `400` |
+| 10a.5 | Student: `POST $B/quizzes/$PQ/attempts` with 1 answer | `201`, one answer with explanation, `score/total/passed` null |
+| 10a.6 | Student: same with `"answers":[]` | `400` "answer at least one question" |
+| 10a.7 | Student: submit to a mock test | Unchanged graded response |
+| 10a.8 | `PATCH $B/quizzes/$PQ {"type":"mock_test"}` after an attempt | `409` |
+| 10a.9 | `PATCH` a quiz with no attempts to `{"type":"practice"}` | `200`, time limit and pass percent cleared |
+| 10a.10 | Student: `GET $B/quizzes/$PQ/attempts` | Practice history, no marks |
+
+---
+
+## 10b. Free preview for notes and quizzes (new)
+
+A note or quiz is open to users previewing a published paid course only when it is marked free itself. A free lesson does **not** unlock its notes, quizzes or videos: each item's own free flag decides. For videos, check `GET $B/courses/$C/videos` as `P`: a paid video in a free lesson has `locked: true`, and `GET $B/videos/<id>/stream` returns `404`. Paid ones are still listed, with `locked: true`, and cannot be opened. Use a paid, published course with a lesson `L1` and a user `P` who is not enrolled. Repeat 10b.4–10b.5 with `L1` marked free: `NP` must stay locked.
+
+| # | Request | Expect |
+|---|---------|--------|
+| 10b.1 | Owner: `curl -s -b admin.jar -X POST $B/lessons/$L1/notes -F title=Free -F isFree=true -F file=@a.pdf` | `201`, `isFree: true`. Save as `NF` |
+| 10b.2 | Owner: same with `-F title=Paid` and no `isFree` | `201`, `isFree: false`. Save as `NP` |
+| 10b.3 | Owner: same with `-F isFree=maybe` | `400` |
+| 10b.4 | `P`: `GET $B/courses/$C/notes?lessonId=$L1` | Both notes; `NP` has `locked: true`, `NF` has no `locked` |
+| 10b.5 | `P`: `GET $B/notes/$NF/file` / `GET $B/notes/$NP/file` | `200` PDF / `404` |
+| 10b.6 | `P`: `GET $B/courses/$C/lessons` | `L1` is `locked`, its `notes` list both, `NP` locked |
+| 10b.7 | Owner: `PATCH $B/notes/$NP {"isFree":true}` | `200`, `isFree: true`; `P` can now download it |
+| 10b.8 | Non-owner instructor: `PATCH $B/notes/$NP {"isFree":false}` | `404` |
+| 10b.8a | Owner: `PATCH $B/notes/$NP {"title":"Renamed","description":"New text"}` | `200`, new title and description; `isFree` unchanged |
+| 10b.8b | Owner: `PATCH $B/notes/$NP {"title":"  "}` | `400` title is required |
+| 10b.9 | Owner: create a quiz on `L1` with `"isFree":true` and one without | `201` both |
+| 10b.10 | `P`: `GET $B/lessons/$L1/quizzes` | Both quizzes; the paid one has `locked: true` |
+| 10b.11 | `P`: `GET $B/quizzes/<paid quiz>` | `404` |
+| 10b.12 | `GET $B/catalog/courses` | `freeNoteCount` counts `NF` |
+
+---
+
 ## 11. `POST /auth/logout` (new)
 
 No login is required, so it works even with an expired session.
@@ -352,3 +394,5 @@ Known limits: videos stuck in `uploading` are not cleaned up (add a bucket lifec
 | `25_courses_slug_unique_active` | Slug unique only among non-deleted courses | Restores `courses_slug_key`. Fails if a deleted course and a live course share a slug |
 | `26_videos_lessons_and_transcoding` | `videos.lesson_id`, `is_free`, `transcode_job` + index | Drops them |
 | `27_create_table_video_progress` | `video_progress(user_id, video_id, position_sec)` for resume | Drops the table |
+| `29_quiz_type` | `quizzes.type` (`mock_test`/`practice`), nullable `pass_percent` | Drops the column; null pass percents become 70 |
+| `30_notes_is_free` | `notes.is_free` for per-note free preview | Drops the column; notes are free again only through their lesson |

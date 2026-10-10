@@ -63,7 +63,8 @@ func authorizeCourse(ctx context.Context, repo *models.LessonRepository, user *m
 
 // authorizePreview is authorizeCourse with a fallback: a user who may not read the whole course can
 // still preview it (preview = true) when it is published. Previewers only get free content: free
-// lessons with their notes, quizzes and videos, plus free quizzes and videos in other lessons.
+// lessons, plus the notes, quizzes and videos marked free on their own (a free lesson does not
+// unlock them).
 func authorizePreview(ctx context.Context, repo *models.LessonRepository, user *models.User, courseID string) (isTeacher, preview bool, err error) {
 	if !uuidPattern.MatchString(courseID) {
 		return false, false, ErrCourseNotFound
@@ -128,8 +129,8 @@ func (s *LessonService) CreateLesson(ctx context.Context, user *models.User, cou
 
 // ListLessons returns the course's lessons in order, each with its PDF notes.
 // Students only see published lessons; the instructor sees everything. Users previewing a course
-// they are not enrolled in see every published lesson, but only free lessons carry notes; the rest
-// come back with locked set.
+// they are not enrolled in see every published lesson and note; paid lessons and the notes they
+// cannot open come back with locked set.
 func (s *LessonService) ListLessons(ctx context.Context, user *models.User, courseID string) ([]models.Lesson, error) {
 	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, courseID)
 	if err != nil {
@@ -140,10 +141,11 @@ func (s *LessonService) ListLessons(ctx context.Context, user *models.User, cour
 	if err != nil {
 		return nil, err
 	}
-	notes, err := s.noteRepo.ListByCourse(ctx, courseID, "", isTeacher, preview, 0, 0)
+	notes, err := s.noteRepo.ListByCourse(ctx, courseID, "", isTeacher, 0, 0)
 	if err != nil {
 		return nil, err
 	}
+	markLockedNotes(notes, preview)
 
 	notesByLesson := map[string][]models.Note{}
 	for _, n := range notes {

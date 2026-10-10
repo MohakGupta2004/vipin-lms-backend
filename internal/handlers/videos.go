@@ -190,7 +190,7 @@ type VideoStreamResponse struct {
 // StreamVideo godoc
 //
 //	@Summary		Get a signed streaming URL for a video
-//	@Description	Returns a signed HLS manifest URL, valid for 15 minutes, that any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is: every playlist and segment URL inside it is already signed. queryParams is the bare signature. Refetch before expiresAt. Free videos (or videos of free lessons) in published courses, and every video of a free course, are open to any logged-in user; everything else needs the course owner or an enrolled student.
+//	@Description	Returns a signed HLS manifest URL, valid for 15 minutes, that any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is: every playlist and segment URL inside it is already signed. queryParams is the bare signature. Refetch before expiresAt. Videos marked free in published courses (a free lesson does not unlock its videos), and every video of a free course, are open to any logged-in user; everything else needs the course owner or an enrolled student.
 //	@Tags			videos
 //	@Produce		json
 //	@Param			id	path		string										true	"Video ID"

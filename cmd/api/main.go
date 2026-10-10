@@ -198,6 +198,7 @@ func main() {
 	mux.Handle("POST /api/v1/lessons/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.UploadNote)))
 	mux.Handle("GET /api/v1/courses/{id}/notes", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.ListNotes)))
 	mux.Handle("GET /api/v1/notes/{id}/file", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DownloadNote)))
+	mux.Handle("PATCH /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.UpdateNote)))
 	mux.Handle("DELETE /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DeleteNote)))
 
 	// lesson videos (course owner uploads straight to the bucket, confirms, then polls until transcoded)
