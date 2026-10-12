@@ -1,12 +1,16 @@
+# Local stack: Postgres, migrations, API. Values come from .env (compose reads it for ${...}).
+# Required in .env: JWT_SECRET_KEY, REFRESH_SECRET_KEY, RESEND_API_KEY, EMAIL_FROM.
 services:
   db:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mohak123}
       POSTGRES_DB: ${POSTGRES_DB:-vipin}
     ports:
-      - "${DB_PORT:-5432}:5432"
+      # Loopback only: reachable from this machine (psql, air), not the network.
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +22,7 @@ services:
   migrate:
     image: migrate/migrate:v4.18.3
     volumes:
-      - ./internal/database/migrations:/migrations
+      - ./internal/database/migrations:/migrations:ro
     command:
       - -path=/migrations
       - -database=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-mohak123}@db:5432/${POSTGRES_DB:-vipin}?sslmode=disable
@@ -29,24 +33,51 @@ services:
 
   api:
     build: .
+    restart: unless-stopped
     environment:
       PORT: ${PORT:-3000}
+      # Always the compose db; a localhost DATABASE_URL in .env is for running the API outside Docker.
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-mohak123}@db:5432/${POSTGRES_DB:-vipin}?sslmode=disable
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_secret_key_here}
+
+      # Auth
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      REFRESH_SECRET_KEY: ${REFRESH_SECRET_KEY:?set REFRESH_SECRET_KEY in .env}
       ACCESS_TOKEN_EXPIRY: ${ACCESS_TOKEN_EXPIRY:-14m}
-      REFRESH_TOKEN_EXPIRY: ${REFRESH_TOKEN_EXPIRY:-7}
-      REFRESH_SECRET_KEY: ${REFRESH_SECRET_KEY:-your_refresh_secret_key_here}
+      REFRESH_TOKEN_EXPIRY: ${REFRESH_TOKEN_EXPIRY:-7} # days
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3001}
       # true when the frontend runs on another site than the API; requires HTTPS on the API.
       COOKIE_CROSS_SITE: ${COOKIE_CROSS_SITE:-false}
-      # PDF uploads work only when GCS_ENABLE=true; otherwise the credentials below are not used.
+      # true only behind a reverse proxy that sets X-Forwarded-For (rate limiting is per client IP).
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+
+      # Email (verification and password reset OTPs)
+      RESEND_API_KEY: ${RESEND_API_KEY:?set RESEND_API_KEY in .env}
+      EMAIL_FROM: ${EMAIL_FROM:?set EMAIL_FROM in .env}
+      EMAIL_RATE_PER_SEC: ${EMAIL_RATE_PER_SEC:-2}
+
+      # Google Cloud: PDF/video storage, transcoding and signed CDN URLs. Off unless GCS_ENABLE=true,
+      # which then requires every variable below.
       GCS_ENABLE: ${GCS_ENABLE:-false}
       GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-vipin-lms}
-      # Required when GCS_ENABLE=true (video transcoding)
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
       TRANSCODER_LOCATION: ${TRANSCODER_LOCATION:-}
+      CDN_DOMAIN: ${CDN_DOMAIN:-}
+      CDN_KEY_NAME: ${CDN_KEY_NAME:-}
+      CDN_SIGNING_KEY: ${CDN_SIGNING_KEY:-}
+      # Application Default Credentials from the folder mounted at /gcp below. By default that is the
+      # host's gcloud config (`gcloud auth application-default login`). For a service account key set
+      # GCP_CREDENTIALS_DIR to its folder and GCP_CREDENTIALS_FILE to its file name.
+      GOOGLE_APPLICATION_CREDENTIALS: /gcp/${GCP_CREDENTIALS_FILE:-application_default_credentials.json}
+    volumes:
+      - ${GCP_CREDENTIALS_DIR:-${HOME}/.config/gcloud}:/gcp:ro
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:$${PORT}/api/v1/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     depends_on:
       migrate:
         condition: service_completed_successfully

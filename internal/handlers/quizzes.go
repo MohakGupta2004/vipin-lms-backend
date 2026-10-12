@@ -6,6 +6,7 @@ import (
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/lib/utils"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/middleware"
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/service"
 )
 
@@ -317,39 +318,25 @@ func (h *QuizHandler) GetQuiz(w http.ResponseWriter, r *http.Request) {
 
 // SubmitAttempt godoc
 //
-//	@Summary		Submit answers to a quiz
-//	@Description	Student sends all answers in one request and gets the graded result back, with the correct option and explanation for every question. Questions left out count as skipped (wrong). Every submission is saved as a new attempt. For a practice set there are no marks: only the answered questions are graded (at least one is required) and score, total and passed are null, so the frontend can check one question at a time.
+//	@Summary		Save a finished practice session
+//	@Description	Practice sets only. At the end of a session the student sends every question they answered in one request and gets them graded back, with the correct option and explanation for each, to show on the review page. Questions left out are not graded; at least one answer is required. score, total and passed are null: practice has no marks. Every submission is saved as a new attempt. Mock tests are refused with 400; submit them with POST /quizzes/{id}/submit.
 //	@Tags			quizzes
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string											true	"Quiz ID"
 //	@Param			request	body		SubmitAttemptRequest							true	"Selected option per question"
 //	@Success		201		{object}	utils.JSONResponse{data=models.QuizAttempt}		"Graded attempt"
-//	@Failure		400		{object}	utils.JSONResponse								"Malformed payload, or answer not part of this quiz"
+//	@Failure		400		{object}	utils.JSONResponse								"Malformed payload, answer not part of this quiz, or a mock test"
 //	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
 //	@Failure		403		{object}	utils.JSONResponse								"Not a student"
 //	@Failure		404		{object}	utils.JSONResponse								"Quiz not found, or not visible to this user"
 //	@Failure		500		{object}	utils.JSONResponse								"Internal server error"
 //	@Router			/quizzes/{id}/attempts [post]
 func (h *QuizHandler) SubmitAttempt(w http.ResponseWriter, r *http.Request) {
-	user, ok := middleware.UserFromContext(r.Context())
+	user, answers, ok := decodeAnswers(w, r)
 	if !ok {
-		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxAttemptBodyBytes)
-	var req SubmitAttemptRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
-		return
-	}
-
-	answers := make([]service.SubmitAnswerInput, 0, len(req.Answers))
-	for _, a := range req.Answers {
-		answers = append(answers, service.SubmitAnswerInput{QuestionID: a.QuestionID, OptionID: a.OptionID})
-	}
-
 	attempt, err := h.quizService.SubmitAttempt(r.Context(), user, r.PathValue("id"), answers)
 	if err != nil {
 		writeServiceError(w, err)
@@ -358,10 +345,100 @@ func (h *QuizHandler) SubmitAttempt(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusCreated, attempt)
 }
 
+// CheckAnswer godoc
+//
+//	@Summary		Check one practice answer
+//	@Description	Practice sets only. The student sends the option they picked for one question and immediately learns whether it is right, which option is correct, and why. Nothing is saved; the whole session is saved at the end with POST /quizzes/{id}/attempts. Mock tests are refused with 400.
+//	@Tags			quizzes
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string											true	"Quiz ID"
+//	@Param			request	body		SubmitAnswerRequest								true	"Selected option"
+//	@Success		200		{object}	utils.JSONResponse{data=models.AttemptAnswer}	"Graded answer"
+//	@Failure		400		{object}	utils.JSONResponse								"Malformed payload, answer not part of this quiz, or a mock test"
+//	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse								"Not a student"
+//	@Failure		404		{object}	utils.JSONResponse								"Quiz not found, or not visible to this user"
+//	@Failure		500		{object}	utils.JSONResponse								"Internal server error"
+//	@Router			/quizzes/{id}/check [post]
+func (h *QuizHandler) CheckAnswer(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxAttemptBodyBytes)
+	var req SubmitAnswerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
+		return
+	}
+
+	answer, err := h.quizService.CheckAnswer(r.Context(), user, r.PathValue("id"), service.SubmitAnswerInput{QuestionID: req.QuestionID, OptionID: req.OptionID})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, answer)
+}
+
+// SubmitMockTest godoc
+//
+//	@Summary		Submit a mock test
+//	@Description	Mock tests only. The student sends all answers in one request; questions left out count as skipped (wrong). The attempt is saved and only the marks come back, like a real exam: no correct options or explanations. Practice sets are refused with 400.
+//	@Tags			quizzes
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string										true	"Quiz ID"
+//	@Param			request	body		SubmitAttemptRequest						true	"Selected option per question"
+//	@Success		201		{object}	utils.JSONResponse{data=models.MockResult}	"Marks"
+//	@Failure		400		{object}	utils.JSONResponse							"Malformed payload, answer not part of this quiz, or a practice set"
+//	@Failure		401		{object}	utils.JSONResponse							"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse							"Not a student"
+//	@Failure		404		{object}	utils.JSONResponse							"Quiz not found, or not visible to this user"
+//	@Failure		500		{object}	utils.JSONResponse							"Internal server error"
+//	@Router			/quizzes/{id}/submit [post]
+func (h *QuizHandler) SubmitMockTest(w http.ResponseWriter, r *http.Request) {
+	user, answers, ok := decodeAnswers(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.quizService.SubmitMockTest(r.Context(), user, r.PathValue("id"), answers)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusCreated, result)
+}
+
+// decodeAnswers reads the logged-in user and a SubmitAttemptRequest. On failure it has already written
+// the response and returns ok false.
+func decodeAnswers(w http.ResponseWriter, r *http.Request) (*models.User, []service.SubmitAnswerInput, bool) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return nil, nil, false
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxAttemptBodyBytes)
+	var req SubmitAttemptRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
+		return nil, nil, false
+	}
+
+	answers := make([]service.SubmitAnswerInput, 0, len(req.Answers))
+	for _, a := range req.Answers {
+		answers = append(answers, service.SubmitAnswerInput{QuestionID: a.QuestionID, OptionID: a.OptionID})
+	}
+	return user, answers, true
+}
+
 // ListAttempts godoc
 //
 //	@Summary		List my attempts at a quiz
-//	@Description	Returns the logged-in student's past attempts at a quiz, newest first. Each attempt has its result and, per question, the selected option, the correct option and the explanation.
+//	@Description	Returns the logged-in student's past attempts at a quiz, newest first. A practice session has, per question, the selected option, the correct option and the explanation. A mock test attempt has its marks only (answers omitted).
 //	@Tags			quizzes
 //	@Produce		json
 //	@Param			id	path		string										true	"Quiz ID"

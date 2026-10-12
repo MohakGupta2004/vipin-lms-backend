@@ -93,3 +93,34 @@ func TestGradeAttemptPractice(t *testing.T) {
 		t.Errorf("bad answer: %+v", got)
 	}
 }
+
+func TestSelectAnswers(t *testing.T) {
+	got, err := selectAnswers(gradingFixture(), []SubmitAnswerInput{{QuestionID: " Q1 ", OptionID: "B1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["q1"] != "b1" || len(got) != 1 {
+		t.Errorf("got %v", got)
+	}
+
+	cases := map[string][]SubmitAnswerInput{
+		"unknown question":     {{QuestionID: "q9", OptionID: "a1"}},
+		"option of other one":  {{QuestionID: "q1", OptionID: "a2"}},
+		"question answered 2x": {{QuestionID: "q1", OptionID: "a1"}, {QuestionID: "q1", OptionID: "b1"}},
+	}
+	for name, in := range cases {
+		if _, err := selectAnswers(gradingFixture(), in); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s: err = %v, want ErrInvalidInput", name, err)
+		}
+	}
+}
+
+func TestMockResultHasMarksOnly(t *testing.T) {
+	quiz := &models.Quiz{ID: "z", Type: models.QuizTypeMockTest, PassPercent: intPtr(50)}
+	a := gradeAttempt(quiz, gradingFixture(), map[string]string{"q1": "b1", "q2": "b2"})
+	a.ID = "att"
+	r := mockResult(quiz, a)
+	if r.AttemptID != "att" || r.Score != 1 || r.Total != 2 || !r.Passed || r.PassPercent != 50 {
+		t.Errorf("bad result: %+v", r)
+	}
+}

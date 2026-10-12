@@ -2824,7 +2824,7 @@ const docTemplate = `{
         },
         "/quizzes/{id}/attempts": {
             "get": {
-                "description": "Returns the logged-in student's past attempts at a quiz, newest first. Each attempt has its result and, per question, the selected option, the correct option and the explanation.",
+                "description": "Returns the logged-in student's past attempts at a quiz, newest first. A practice session has, per question, the selected option, the correct option and the explanation. A mock test attempt has its marks only (answers omitted).",
                 "produces": [
                     "application/json"
                 ],
@@ -2890,7 +2890,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Student sends all answers in one request and gets the graded result back, with the correct option and explanation for every question. Questions left out count as skipped (wrong). Every submission is saved as a new attempt. For a practice set there are no marks: only the answered questions are graded (at least one is required) and score, total and passed are null, so the frontend can check one question at a time.",
+                "description": "Practice sets only. At the end of a session the student sends every question they answered in one request and gets them graded back, with the correct option and explanation for each, to show on the review page. Questions left out are not graded; at least one answer is required. score, total and passed are null: practice has no marks. Every submission is saved as a new attempt. Mock tests are refused with 400; submit them with POST /quizzes/{id}/submit.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2900,7 +2900,7 @@ const docTemplate = `{
                 "tags": [
                     "quizzes"
                 ],
-                "summary": "Submit answers to a quiz",
+                "summary": "Save a finished practice session",
                 "parameters": [
                     {
                         "type": "string",
@@ -2939,7 +2939,90 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Malformed payload, or answer not part of this quiz",
+                        "description": "Malformed payload, answer not part of this quiz, or a mock test",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a student",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Quiz not found, or not visible to this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/quizzes/{id}/check": {
+            "post": {
+                "description": "Practice sets only. The student sends the option they picked for one question and immediately learns whether it is right, which option is correct, and why. Nothing is saved; the whole session is saved at the end with POST /quizzes/{id}/attempts. Mock tests are refused with 400.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "quizzes"
+                ],
+                "summary": "Check one practice answer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Quiz ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Selected option",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubmitAnswerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Graded answer",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.AttemptAnswer"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload, answer not part of this quiz, or a mock test",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -3041,6 +3124,89 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Quiz not found, or not in a course this user teaches",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/quizzes/{id}/submit": {
+            "post": {
+                "description": "Mock tests only. The student sends all answers in one request; questions left out count as skipped (wrong). The attempt is saved and only the marks come back, like a real exam: no correct options or explanations. Practice sets are refused with 400.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "quizzes"
+                ],
+                "summary": "Submit a mock test",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Quiz ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Selected option per question",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubmitAttemptRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Marks",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.MockResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload, answer not part of this quiz, or a practice set",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a student",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Quiz not found, or not visible to this user",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -4246,6 +4412,32 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                }
+            }
+        },
+        "models.MockResult": {
+            "type": "object",
+            "properties": {
+                "attemptId": {
+                    "type": "string"
+                },
+                "passPercent": {
+                    "type": "integer"
+                },
+                "passed": {
+                    "type": "boolean"
+                },
+                "quizId": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "integer"
+                },
+                "submittedAt": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },

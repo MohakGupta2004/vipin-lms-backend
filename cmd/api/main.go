@@ -221,6 +221,8 @@ func main() {
 	mux.Handle("PATCH /api/v1/quizzes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.UpdateQuiz)))
 	mux.Handle("DELETE /api/v1/quizzes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.DeleteQuiz)))
 	mux.Handle("POST /api/v1/quizzes/{id}/attempts", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.SubmitAttempt)))
+	mux.Handle("POST /api/v1/quizzes/{id}/check", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.CheckAnswer)))
+	mux.Handle("POST /api/v1/quizzes/{id}/submit", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.SubmitMockTest)))
 	mux.Handle("GET /api/v1/quizzes/{id}/attempts", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.ListAttempts)))
 
 	srv := http.Server{

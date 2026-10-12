@@ -11,9 +11,9 @@ import (
 var ErrQuizHasAttempts = errors.New("this quiz already has attempts, so its questions or type cannot be changed; create a new quiz instead")
 
 const (
-	// QuizTypeMockTest is timed (optionally) and scored, with a pass mark.
+	// QuizTypeMockTest is timed (optionally) and scored, with a pass mark. Students only ever see their marks.
 	QuizTypeMockTest = "mock_test"
-	// QuizTypePractice is untimed and unscored; answers and explanations are still revealed.
+	// QuizTypePractice is untimed and unscored; each answer and its explanation is revealed as soon as it is given.
 	QuizTypePractice = "practice"
 )
 
@@ -67,6 +67,18 @@ type QuizAttempt struct {
 	Total       *int            `json:"total"`  // nil for practice sets
 	Passed      *bool           `json:"passed"` // nil for practice sets
 	Answers     []AttemptAnswer `json:"answers,omitempty"`
+}
+
+// MockResult is what a student gets back after submitting a mock test: the marks and nothing else,
+// so the correct answers stay hidden like in a real exam.
+type MockResult struct {
+	AttemptID   string    `json:"attemptId"`
+	QuizID      string    `json:"quizId"`
+	Score       int       `json:"score"`
+	Total       int       `json:"total"`
+	Passed      bool      `json:"passed"`
+	PassPercent int       `json:"passPercent"`
+	SubmittedAt time.Time `json:"submittedAt"`
 }
 
 // AttemptAnswer is the student's answer to one question, with the correct answer revealed.

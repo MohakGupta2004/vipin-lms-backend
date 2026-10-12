@@ -438,6 +438,23 @@ definitions:
       title:
         type: string
     type: object
+  models.MockResult:
+    properties:
+      attemptId:
+        type: string
+      passPercent:
+        type: integer
+      passed:
+        type: boolean
+      quizId:
+        type: string
+      score:
+        type: integer
+      submittedAt:
+        type: string
+      total:
+        type: integer
+    type: object
   models.Note:
     properties:
       courseId:
@@ -2482,8 +2499,9 @@ paths:
   /quizzes/{id}/attempts:
     get:
       description: Returns the logged-in student's past attempts at a quiz, newest
-        first. Each attempt has its result and, per question, the selected option,
-        the correct option and the explanation.
+        first. A practice session has, per question, the selected option, the correct
+        option and the explanation. A mock test attempt has its marks only (answers
+        omitted).
       parameters:
       - description: Quiz ID
         in: path
@@ -2526,12 +2544,12 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Student sends all answers in one request and gets the graded result
-        back, with the correct option and explanation for every question. Questions
-        left out count as skipped (wrong). Every submission is saved as a new attempt.
-        For a practice set there are no marks: only the answered questions are graded
-        (at least one is required) and score, total and passed are null, so the frontend
-        can check one question at a time.'
+      description: 'Practice sets only. At the end of a session the student sends
+        every question they answered in one request and gets them graded back, with
+        the correct option and explanation for each, to show on the review page. Questions
+        left out are not graded; at least one answer is required. score, total and
+        passed are null: practice has no marks. Every submission is saved as a new
+        attempt. Mock tests are refused with 400; submit them with POST /quizzes/{id}/submit.'
       parameters:
       - description: Quiz ID
         in: path
@@ -2557,7 +2575,8 @@ paths:
                   $ref: '#/definitions/models.QuizAttempt'
               type: object
         "400":
-          description: Malformed payload, or answer not part of this quiz
+          description: Malformed payload, answer not part of this quiz, or a mock
+            test
           schema:
             $ref: '#/definitions/utils.JSONResponse'
         "401":
@@ -2576,7 +2595,63 @@ paths:
           description: Internal server error
           schema:
             $ref: '#/definitions/utils.JSONResponse'
-      summary: Submit answers to a quiz
+      summary: Save a finished practice session
+      tags:
+      - quizzes
+  /quizzes/{id}/check:
+    post:
+      consumes:
+      - application/json
+      description: Practice sets only. The student sends the option they picked for
+        one question and immediately learns whether it is right, which option is correct,
+        and why. Nothing is saved; the whole session is saved at the end with POST
+        /quizzes/{id}/attempts. Mock tests are refused with 400.
+      parameters:
+      - description: Quiz ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Selected option
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SubmitAnswerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Graded answer
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.AttemptAnswer'
+              type: object
+        "400":
+          description: Malformed payload, answer not part of this quiz, or a mock
+            test
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not a student
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Quiz not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Check one practice answer
       tags:
       - quizzes
   /quizzes/{id}/status:
@@ -2630,6 +2705,62 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Change quiz status
+      tags:
+      - quizzes
+  /quizzes/{id}/submit:
+    post:
+      consumes:
+      - application/json
+      description: 'Mock tests only. The student sends all answers in one request;
+        questions left out count as skipped (wrong). The attempt is saved and only
+        the marks come back, like a real exam: no correct options or explanations.
+        Practice sets are refused with 400.'
+      parameters:
+      - description: Quiz ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Selected option per question
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SubmitAttemptRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Marks
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.MockResult'
+              type: object
+        "400":
+          description: Malformed payload, answer not part of this quiz, or a practice
+            set
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not a student
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Quiz not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Submit a mock test
       tags:
       - quizzes
   /users:
