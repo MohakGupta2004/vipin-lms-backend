@@ -257,16 +257,34 @@ func (s *VideoService) StreamVideo(ctx context.Context, user *models.User, video
 	}, nil
 }
 
+// completeAtFraction is how much of a video counts as watching it: past 90% it is marked completed,
+// since players usually stop on the credits or a few seconds short of the end.
+const completeAtFraction = 0.9
+
 // SaveProgress stores where the user stopped in a video they may watch, so the next stream resumes there.
-func (s *VideoService) SaveProgress(ctx context.Context, user *models.User, videoID string, positionSec int) error {
+// durationSec, when the player knows it, is stored with it, and reaching 90% of it marks the video completed.
+func (s *VideoService) SaveProgress(ctx context.Context, user *models.User, videoID string, positionSec int, durationSec *int) error {
 	if positionSec < 0 || positionSec > maxVideoPositionSec {
 		return fmt.Errorf("%w: positionSec must be 0 to %d", ErrInvalidInput, maxVideoPositionSec)
+	}
+	if durationSec != nil && (*durationSec < 1 || *durationSec > maxVideoPositionSec) {
+		return fmt.Errorf("%w: durationSec must be 1 to %d", ErrInvalidInput, maxVideoPositionSec)
 	}
 	video, err := s.watchableVideo(ctx, user, videoID)
 	if err != nil {
 		return err
 	}
-	return s.videoRepo.SaveProgress(ctx, user.ID, video.ID, positionSec)
+	reached := durationSec != nil && float64(positionSec) >= completeAtFraction*float64(*durationSec)
+	return s.videoRepo.SaveProgress(ctx, user.ID, video.ID, positionSec, durationSec, reached)
+}
+
+// SetCompleted lets a user mark a video they may watch as completed, or not completed.
+func (s *VideoService) SetCompleted(ctx context.Context, user *models.User, videoID string, completed bool) error {
+	video, err := s.watchableVideo(ctx, user, videoID)
+	if err != nil {
+		return err
+	}
+	return s.videoRepo.SetCompleted(ctx, user.ID, video.ID, completed)
 }
 
 // watchableVideo loads a ready video the user may watch: the course owner, an enrolled student, or any
@@ -417,20 +435,27 @@ func (s *VideoService) ListLessonVideos(ctx context.Context, user *models.User, 
 	return videos, nil
 }
 
-// ListCourseVideos lists every video of a course the user may see, in lesson order.
-// Users previewing the course get every ready video so they can see the whole curriculum,
-// with locked set on the ones they cannot stream.
+// ListCourseVideos lists every video of a course the user may see, in lesson order, each with the
+// user's own progress. Users previewing the course get every ready video so they can see the whole
+// curriculum, with locked set on the ones they cannot stream.
 func (s *VideoService) ListCourseVideos(ctx context.Context, user *models.User, courseID string) ([]models.Video, error) {
 	isTeacher, preview, err := s.courseAccess(ctx, user, courseID)
 	if err != nil {
 		return nil, notFoundAs(err, ErrCourseNotFound)
 	}
 	videos, err := s.videoRepo.List(ctx, models.VideoListFilter{CourseID: courseID, OnlyReady: !isTeacher})
-	if err != nil || !preview {
-		return videos, err
+	if err != nil {
+		return nil, err
+	}
+	progress, err := s.videoRepo.ListProgress(ctx, user.ID, courseID)
+	if err != nil {
+		return nil, err
 	}
 	for i := range videos {
-		videos[i].Locked = videoLocked(&videos[i])
+		videos[i].Progress = progress[videos[i].ID]
+		if preview {
+			videos[i].Locked = videoLocked(&videos[i])
+		}
 	}
 	return videos, nil
 }

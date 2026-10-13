@@ -98,6 +98,7 @@ func main() {
 	noteRepo := models.NewNoteRepository(db)
 	quizRepo := models.NewQuizRepository(db)
 	videoRepo := models.NewVideoRepository(db)
+	learningRepo := models.NewLearningRepository(db)
 	otpRepo := models.NewOTPRepository(db)
 
 	// services
@@ -110,6 +111,7 @@ func main() {
 	noteService := service.NewNoteService(noteRepo, lessonRepo, pdfStore)
 	quizService := service.NewQuizService(quizRepo, lessonRepo)
 	userService := service.NewUserService(userRepo)
+	learningService := service.NewLearningService(learningRepo)
 
 	// transcoding runs on an in-process queue; it stays unused (and nothing is enqueued) when GCS is disabled
 	var transcodeQueue *service.TranscodeQueue
@@ -143,6 +145,7 @@ func main() {
 	quizHandler := handlers.NewQuizHandler(quizService)
 	userHandler := handlers.NewUserHandler(userService)
 	videoHandler := handlers.NewVideoHandler(videoService)
+	learningHandler := handlers.NewLearningHandler(learningService)
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
@@ -180,6 +183,9 @@ func main() {
 	mux.Handle("DELETE /api/v1/courses/{id}", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.DeleteCourse)))
 	mux.Handle("PATCH /api/v1/courses/{id}/status", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.UpdateCourseStatus)))
 	mux.Handle("GET /api/v1/me/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.ListMyCourses)))
+	mux.Handle("GET /api/v1/me/videos", authMiddleware.RequireAuth(http.HandlerFunc(learningHandler.ListMyVideos)))
+	mux.Handle("GET /api/v1/me/quizzes", authMiddleware.RequireAuth(http.HandlerFunc(learningHandler.ListMyQuizzes)))
+	mux.Handle("GET /api/v1/me/progress", authMiddleware.RequireAuth(http.HandlerFunc(learningHandler.GetMyProgress)))
 	mux.Handle("GET /api/v1/catalog/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.ListCatalog)))
 
 	// exam routes (any logged-in user)
@@ -209,6 +215,7 @@ func main() {
 	// playback: signed CDN URL + video lists for owners and students
 	mux.Handle("GET /api/v1/videos/{id}/stream", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.StreamVideo)))
 	mux.Handle("PUT /api/v1/videos/{id}/progress", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.SaveVideoProgress)))
+	mux.Handle("PUT /api/v1/videos/{id}/completion", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.SetVideoCompletion)))
 	mux.HandleFunc("GET /api/v1/videos/{id}/hls/{file}", videoHandler.VideoPlaylist) // no auth: the signed query is the credential
 	mux.Handle("GET /api/v1/lessons/{id}/videos", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.ListLessonVideos)))
 	mux.Handle("GET /api/v1/courses/{id}/videos", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.ListCourseVideos)))

@@ -318,6 +318,17 @@ func (h *VideoHandler) ListCourseVideos(w http.ResponseWriter, r *http.Request) 
 
 type saveVideoProgressBody struct {
 	PositionSec int `json:"positionSec"`
+	// DurationSec is the video's length as the player reports it. Optional; once sent, reaching 90% of it marks the video completed.
+	DurationSec *int `json:"durationSec,omitempty"`
+}
+
+type setVideoCompletionBody struct {
+	Completed bool `json:"completed"`
+}
+
+// VideoCompletionResponse is the saved completion state.
+type VideoCompletionResponse struct {
+	Completed bool `json:"completed"`
 }
 
 // VideoProgressResponse is the saved playback position.
@@ -328,12 +339,12 @@ type VideoProgressResponse struct {
 // SaveVideoProgress godoc
 //
 //	@Summary		Save where the user stopped in a video
-//	@Description	Call every 10-15 seconds while playing and on pause. The next GET /videos/{id}/stream returns it as resumeAt and the manifest starts playback there. Send 0 when the video ends so it restarts from the beginning.
+//	@Description	Call every 10-15 seconds while playing and on pause. The next GET /videos/{id}/stream returns it as resumeAt and the manifest starts playback there. Send 0 when the video ends so it restarts from the beginning. Send durationSec too once the player knows it: a position past 90% of it marks the video completed (completion is never undone by a later position).
 //	@Tags			videos
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string											true	"Video ID"
-//	@Param			body	body		saveVideoProgressBody							true	"Position in seconds (0 to 86400)"
+//	@Param			body	body		saveVideoProgressBody							true	"Position in seconds (0 to 86400), and optionally the duration (1 to 86400)"
 //	@Success		200		{object}	utils.JSONResponse{data=VideoProgressResponse}	"Saved"
 //	@Failure		400		{object}	utils.JSONResponse								"Invalid body or position"
 //	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
@@ -357,9 +368,48 @@ func (h *VideoHandler) SaveVideoProgress(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.videoService.SaveProgress(r.Context(), user, r.PathValue("id"), body.PositionSec); err != nil {
+	if err := h.videoService.SaveProgress(r.Context(), user, r.PathValue("id"), body.PositionSec, body.DurationSec); err != nil {
 		writeServiceError(w, err)
 		return
 	}
 	utils.WriteJSONResponse(w, http.StatusOK, VideoProgressResponse{PositionSec: body.PositionSec})
+}
+
+// SetVideoCompletion godoc
+//
+//	@Summary		Mark a video completed or not completed
+//	@Description	For the user's own checklist: the course player's tick box, and the end of playback. Shows up in GET /me/progress and in each video's progress.
+//	@Tags			videos
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string												true	"Video ID"
+//	@Param			body	body		setVideoCompletionBody								true	"Completed or not"
+//	@Success		200		{object}	utils.JSONResponse{data=VideoCompletionResponse}	"Saved"
+//	@Failure		400		{object}	utils.JSONResponse									"Invalid body"
+//	@Failure		401		{object}	utils.JSONResponse									"Not logged in"
+//	@Failure		404		{object}	utils.JSONResponse									"Video not found, or not visible to this user"
+//	@Failure		409		{object}	utils.JSONResponse									"Video is not ready yet (owner only)"
+//	@Failure		500		{object}	utils.JSONResponse									"Internal server error"
+//	@Router			/videos/{id}/completion [put]
+func (h *VideoHandler) SetVideoCompletion(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxVideoRequestBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	var body setVideoCompletionBody
+	if err := dec.Decode(&body); err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.videoService.SetCompleted(r.Context(), user, r.PathValue("id"), body.Completed); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, VideoCompletionResponse{Completed: body.Completed})
 }

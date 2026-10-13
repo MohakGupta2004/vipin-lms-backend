@@ -25,10 +25,38 @@ type Video struct {
 	UploadedBy string    `json:"-"`
 	// Locked is set for users previewing a course: they see the title but cannot stream it.
 	Locked bool `json:"locked,omitempty"`
+	// Progress is the requesting user's own playback of this video, when listed for a viewer. Nil = never played.
+	Progress *VideoProgress `json:"progress,omitempty"`
 
 	OriginalKey  string `json:"-"`
 	TranscodeJob string `json:"-"`
 	HLSPrefix    string `json:"-"`
+}
+
+// VideoProgress is how far one user got in one video.
+type VideoProgress struct {
+	PositionSec int `json:"positionSec"`
+	// DurationSec is the length the user's player reported; nil until it has reported one.
+	DurationSec *int       `json:"durationSec"`
+	CompletedAt *time.Time `json:"completedAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+}
+
+// scanProgress reads the four nullable video_progress columns of a LEFT JOIN; it returns nil when there is no row.
+func scanProgress(position, duration sql.NullInt32, completedAt, updatedAt sql.NullTime) *VideoProgress {
+	if !updatedAt.Valid {
+		return nil
+	}
+	p := &VideoProgress{PositionSec: int(position.Int32), UpdatedAt: updatedAt.Time}
+	if duration.Valid {
+		d := int(duration.Int32)
+		p.DurationSec = &d
+	}
+	if completedAt.Valid {
+		t := completedAt.Time
+		p.CompletedAt = &t
+	}
+	return p
 }
 
 type VideoRepository struct {
@@ -39,9 +67,12 @@ func NewVideoRepository(db *sql.DB) *VideoRepository {
 	return &VideoRepository{db: db}
 }
 
-const videoSelect = `SELECT v.id, COALESCE(v.lesson_id::text, ''), COALESCE(v.course_id::text, ''), v.uploaded_by, v.title, v.is_free,
+// videoColumns are the columns scanVideo reads, from videos aliased v.
+const videoColumns = `v.id, COALESCE(v.lesson_id::text, ''), COALESCE(v.course_id::text, ''), v.uploaded_by, v.title, v.is_free,
 		v.status, COALESCE(v.error, ''), COALESCE(v.size_bytes, 0), v.created_at, v.updated_at,
-		v.original_key, COALESCE(v.transcode_job, ''), COALESCE(v.hls_prefix, '')
+		v.original_key, COALESCE(v.transcode_job, ''), COALESCE(v.hls_prefix, '')`
+
+const videoSelect = `SELECT ` + videoColumns + `
 	FROM videos v`
 
 func scanVideo(row interface{ Scan(...any) error }, v *Video) error {
@@ -173,13 +204,50 @@ func (r *VideoRepository) mustAffect(ctx context.Context, query string, args ...
 	return nil
 }
 
-// SaveProgress stores where the user stopped in a video, replacing any earlier position.
-func (r *VideoRepository) SaveProgress(ctx context.Context, userID, videoID string, positionSec int) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO video_progress (user_id, video_id, position_sec)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (user_id, video_id) DO UPDATE SET position_sec = EXCLUDED.position_sec`,
-		userID, videoID, positionSec)
+// SaveProgress stores where the user stopped in a video, replacing any earlier position. A non-nil durationSec
+// replaces the stored duration. reached marks the video completed; a completed video stays completed.
+func (r *VideoRepository) SaveProgress(ctx context.Context, userID, videoID string, positionSec int, durationSec *int, reached bool) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO video_progress (user_id, video_id, position_sec, duration_sec, completed_at)
+		VALUES ($1, $2, $3, $4, CASE WHEN $5::boolean THEN now() END)
+		ON CONFLICT (user_id, video_id) DO UPDATE SET
+			position_sec = EXCLUDED.position_sec,
+			duration_sec = COALESCE(EXCLUDED.duration_sec, video_progress.duration_sec),
+			completed_at = COALESCE(video_progress.completed_at, EXCLUDED.completed_at)`,
+		userID, videoID, positionSec, durationSec, reached)
 	return err
+}
+
+// SetCompleted marks a video completed (keeping the first completion time) or not completed for a user.
+func (r *VideoRepository) SetCompleted(ctx context.Context, userID, videoID string, completed bool) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO video_progress (user_id, video_id, completed_at)
+		VALUES ($1, $2, CASE WHEN $3::boolean THEN now() END)
+		ON CONFLICT (user_id, video_id) DO UPDATE SET
+			completed_at = CASE WHEN $3::boolean THEN COALESCE(video_progress.completed_at, now()) END`,
+		userID, videoID, completed)
+	return err
+}
+
+// ListProgress returns a user's progress in a course's videos, keyed by video ID. Videos never played are absent.
+func (r *VideoRepository) ListProgress(ctx context.Context, userID, courseID string) (map[string]*VideoProgress, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT vp.video_id, vp.position_sec, vp.duration_sec, vp.completed_at, vp.updated_at
+		FROM video_progress vp
+		JOIN videos v ON v.id = vp.video_id
+		WHERE vp.user_id = $1 AND v.course_id = $2`, userID, courseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	progress := map[string]*VideoProgress{}
+	for rows.Next() {
+		var videoID string
+		var position, duration sql.NullInt32
+		var completedAt, updatedAt sql.NullTime
+		if err := rows.Scan(&videoID, &position, &duration, &completedAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		progress[videoID] = scanProgress(position, duration, completedAt, updatedAt)
+	}
+	return progress, rows.Err()
 }
 
 // GetProgress returns where the user stopped in a video, or 0 if they never played it.

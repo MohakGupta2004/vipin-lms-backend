@@ -165,7 +165,7 @@ const docTemplate = `{
         },
         "/auth/me": {
             "get": {
-                "description": "Returns the user the access_token cookie belongs to, with their current role read from the database.",
+                "description": "Returns the user the access_token cookie belongs to, with their current role and phone read from the database.",
                 "produces": [
                     "application/json"
                 ],
@@ -289,7 +289,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Malformed payload or missing required fields",
+                        "description": "Malformed payload, missing required fields or invalid phone",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -2208,6 +2208,178 @@ const docTemplate = `{
                 }
             }
         },
+        "/me/progress": {
+            "get": {
+                "description": "Counts across the user's courses, overall (totals) and per course: videos completed and in progress, approximate watch time, practice sets and mock tests attempted, mock tests passed and the average best mock score, notes available, and an overall percent (videos completed plus quizzes attempted, out of all of them). Also up to 4 started videos to continue, most recent first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "My learning progress",
+                "responses": {
+                    "200": {
+                        "description": "Progress",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/service.ProgressSummary"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/me/quizzes": {
+            "get": {
+                "description": "Every quiz across the user's courses, in course and lesson order, each with courseTitle, lessonTitle and the user's attempt summary: attemptCount, lastAttemptAt, and for mock tests bestPercent and passed. Students only get published quizzes of published lessons.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "List the quizzes of my courses",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Only this course",
+                        "name": "courseId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "mock_test or practice",
+                        "name": "type",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Quizzes",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.MyQuiz"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid courseId or type",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/me/videos": {
+            "get": {
+                "description": "Every ready video across the user's courses (a student's valid enrollments, or the courses an instructor or admin owns), in course and lesson order, each with courseTitle, lessonTitle and the user's own progress (nil until played). Students only get videos of published lessons.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "List the videos of my courses",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Only this course",
+                        "name": "courseId",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Videos",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.MyVideo"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid courseId",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/notes/{id}": {
             "delete": {
                 "description": "Course owner (instructor or admin) deletes a note of their course. The PDF is removed too.",
@@ -3364,6 +3536,89 @@ const docTemplate = `{
                 }
             }
         },
+        "/videos/{id}/completion": {
+            "put": {
+                "description": "For the user's own checklist: the course player's tick box, and the end of playback. Shows up in GET /me/progress and in each video's progress.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "videos"
+                ],
+                "summary": "Mark a video completed or not completed",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Video ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Completed or not",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.setVideoCompletionBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Saved",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/handlers.VideoCompletionResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Video not found, or not visible to this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Video is not ready yet (owner only)",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/videos/{id}/confirm": {
             "post": {
                 "description": "Call after the file was PUT to the signed URL. Checks the file and starts transcoding in the background; poll GET /videos/{id} until status is ready.",
@@ -3525,7 +3780,7 @@ const docTemplate = `{
         },
         "/videos/{id}/progress": {
             "put": {
-                "description": "Call every 10-15 seconds while playing and on pause. The next GET /videos/{id}/stream returns it as resumeAt and the manifest starts playback there. Send 0 when the video ends so it restarts from the beginning.",
+                "description": "Call every 10-15 seconds while playing and on pause. The next GET /videos/{id}/stream returns it as resumeAt and the manifest starts playback there. Send 0 when the video ends so it restarts from the beginning. Send durationSec too once the player knows it: a position past 90% of it marks the video completed (completion is never undone by a later position).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3545,7 +3800,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Position in seconds (0 to 86400)",
+                        "description": "Position in seconds (0 to 86400), and optionally the duration (1 to 86400)",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -3942,6 +4197,9 @@ const docTemplate = `{
                 },
                 "password": {
                     "type": "string"
+                },
+                "phone": {
+                    "type": "string"
                 }
             }
         },
@@ -4119,6 +4377,14 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.VideoCompletionResponse": {
+            "type": "object",
+            "properties": {
+                "completed": {
+                    "type": "boolean"
+                }
+            }
+        },
         "handlers.VideoProgressResponse": {
             "type": "object",
             "properties": {
@@ -4201,8 +4467,20 @@ const docTemplate = `{
         "handlers.saveVideoProgressBody": {
             "type": "object",
             "properties": {
+                "durationSec": {
+                    "description": "DurationSec is the video's length as the player reports it. Optional; once sent, reaching 90% of it marks the video completed.",
+                    "type": "integer"
+                },
                 "positionSec": {
                     "type": "integer"
+                }
+            }
+        },
+        "handlers.setVideoCompletionBody": {
+            "type": "object",
+            "properties": {
+                "completed": {
+                    "type": "boolean"
                 }
             }
         },
@@ -4329,6 +4607,59 @@ const docTemplate = `{
                 }
             }
         },
+        "models.CourseProgress": {
+            "type": "object",
+            "properties": {
+                "courseId": {
+                    "type": "string"
+                },
+                "courseTitle": {
+                    "type": "string"
+                },
+                "mockAvgPercent": {
+                    "description": "MockAvgPercent averages the best score of each mock test taken; nil when none was taken.",
+                    "type": "integer"
+                },
+                "mockDone": {
+                    "type": "integer"
+                },
+                "mockPassed": {
+                    "type": "integer"
+                },
+                "mockTotal": {
+                    "type": "integer"
+                },
+                "notesTotal": {
+                    "type": "integer"
+                },
+                "percent": {
+                    "description": "Percent is the share of videos completed and quizzes attempted, 0 to 100.",
+                    "type": "integer"
+                },
+                "practiceDone": {
+                    "type": "integer"
+                },
+                "practiceTotal": {
+                    "type": "integer"
+                },
+                "quizAttempts": {
+                    "type": "integer"
+                },
+                "videosCompleted": {
+                    "type": "integer"
+                },
+                "videosInProgress": {
+                    "type": "integer"
+                },
+                "videosTotal": {
+                    "type": "integer"
+                },
+                "watchedSec": {
+                    "description": "WatchedSec approximates time spent watching: the full length of completed videos plus the\nposition reached in the others.",
+                    "type": "integer"
+                }
+            }
+        },
         "models.Enrollment": {
             "type": "object",
             "properties": {
@@ -4438,6 +4769,136 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "models.MyQuiz": {
+            "type": "object",
+            "properties": {
+                "attemptCount": {
+                    "type": "integer"
+                },
+                "bestPercent": {
+                    "description": "BestPercent is the best mock test score in percent; nil for practice sets and untried quizzes.",
+                    "type": "integer"
+                },
+                "courseId": {
+                    "type": "string"
+                },
+                "courseTitle": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "createdBy": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isFree": {
+                    "type": "boolean"
+                },
+                "lastAttemptAt": {
+                    "type": "string"
+                },
+                "lessonId": {
+                    "type": "string"
+                },
+                "lessonTitle": {
+                    "type": "string"
+                },
+                "locked": {
+                    "description": "Locked is set for users previewing a course: they see the quiz but cannot open it.",
+                    "type": "boolean"
+                },
+                "passPercent": {
+                    "description": "nil for practice sets",
+                    "type": "integer"
+                },
+                "passed": {
+                    "description": "Passed is true once any mock test attempt passed; nil for practice sets and untried quizzes.",
+                    "type": "boolean"
+                },
+                "questionCount": {
+                    "type": "integer"
+                },
+                "questions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Question"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "timeLimitSec": {
+                    "description": "nil = untimed",
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "mock_test or practice",
+                    "type": "string"
+                }
+            }
+        },
+        "models.MyVideo": {
+            "type": "object",
+            "properties": {
+                "courseId": {
+                    "type": "string"
+                },
+                "courseTitle": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isFree": {
+                    "type": "boolean"
+                },
+                "lessonId": {
+                    "type": "string"
+                },
+                "lessonTitle": {
+                    "type": "string"
+                },
+                "locked": {
+                    "description": "Locked is set for users previewing a course: they see the title but cannot stream it.",
+                    "type": "boolean"
+                },
+                "progress": {
+                    "description": "Progress is the requesting user's own playback of this video, when listed for a viewer. Nil = never played.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.VideoProgress"
+                        }
+                    ]
+                },
+                "sizeBytes": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
                 }
             }
         },
@@ -4686,6 +5147,10 @@ const docTemplate = `{
                 "lastName": {
                     "type": "string"
                 },
+                "phone": {
+                    "description": "Phone is empty for accounts created before phone numbers were collected.",
+                    "type": "string"
+                },
                 "role": {
                     "$ref": "#/definitions/models.Role"
                 }
@@ -4736,6 +5201,14 @@ const docTemplate = `{
                     "description": "Locked is set for users previewing a course: they see the title but cannot stream it.",
                     "type": "boolean"
                 },
+                "progress": {
+                    "description": "Progress is the requesting user's own playback of this video, when listed for a viewer. Nil = never played.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.VideoProgress"
+                        }
+                    ]
+                },
                 "sizeBytes": {
                     "type": "integer"
                 },
@@ -4747,6 +5220,52 @@ const docTemplate = `{
                 },
                 "updatedAt": {
                     "type": "string"
+                }
+            }
+        },
+        "models.VideoProgress": {
+            "type": "object",
+            "properties": {
+                "completedAt": {
+                    "type": "string"
+                },
+                "durationSec": {
+                    "description": "DurationSec is the length the user's player reported; nil until it has reported one.",
+                    "type": "integer"
+                },
+                "positionSec": {
+                    "type": "integer"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "service.ProgressSummary": {
+            "type": "object",
+            "properties": {
+                "continueWatching": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.MyVideo"
+                    }
+                },
+                "courseCount": {
+                    "type": "integer"
+                },
+                "courses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.CourseProgress"
+                    }
+                },
+                "totals": {
+                    "description": "Totals adds up every course; it has no courseId or courseTitle.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.CourseProgress"
+                        }
+                    ]
                 }
             }
         },

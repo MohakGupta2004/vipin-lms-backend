@@ -208,9 +208,12 @@ func (r *QuizRepository) SoftDelete(ctx context.Context, quizID string) error {
 	return r.db.QueryRowContext(ctx, "UPDATE quizzes SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id", quizID).Scan(&id)
 }
 
-const quizSelect = `SELECT q.id, q.course_id, q.lesson_id, q.created_by, q.title, COALESCE(q.description, ''),
+// quizColumns are the columns scanQuiz reads, from quizzes aliased q joined to its lesson aliased l.
+const quizColumns = `q.id, q.course_id, q.lesson_id, q.created_by, q.title, COALESCE(q.description, ''),
 		q.type, q.time_limit_sec, q.pass_percent, q.is_free, q.status,
-		(SELECT COUNT(*) FROM questions qu WHERE qu.quiz_id = q.id), q.created_at, l.is_published
+		(SELECT COUNT(*) FROM questions qu WHERE qu.quiz_id = q.id), q.created_at, l.is_published`
+
+const quizSelect = `SELECT ` + quizColumns + `
 	FROM quizzes q
 	JOIN lessons l ON l.id = q.lesson_id AND l.deleted_at IS NULL
 	WHERE q.deleted_at IS NULL`
