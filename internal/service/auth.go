@@ -37,7 +37,7 @@ func NewAuthService(userRepository *models.UserRepository, databaseContext conte
 	}
 }
 
-func (s *AuthService) Register(firstName, lastName, email, password string) (*models.User, string, string, error) {
+func (s *AuthService) Register(firstName, lastName, email, phone, password string) (*models.User, string, string, error) {
 	user, err := s.userRepository.GetUserByEmail(email, s.databaseContext)
 	if err != nil {
 		return nil, "", "", err
@@ -51,7 +51,7 @@ func (s *AuthService) Register(firstName, lastName, email, password string) (*mo
 		return nil, "", "", err
 	}
 
-	registeredUser, err := s.userRepository.CreateUser(firstName, lastName, email, hashedPassword, s.databaseContext)
+	registeredUser, err := s.userRepository.CreateUser(firstName, lastName, email, phone, hashedPassword, s.databaseContext)
 	if err != nil {
 		return nil, "", "", err
 	}

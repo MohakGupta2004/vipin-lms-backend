@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/lib/utils"
@@ -16,6 +17,7 @@ type RegisterRequest struct {
 	FirstName string `json:"firstName"`
 	LastName  string `json:"lastName"`
 	Email     string `json:"email"`
+	Phone     string `json:"phone"`
 	Password  string `json:"password"`
 }
 
@@ -48,7 +50,7 @@ func NewAuthHandler(userRepo *models.UserRepository, authService *service.AuthSe
 //	@Produce		json
 //	@Param			request	body		RegisterRequest							true	"Registration details"
 //	@Success		201		{object}	utils.JSONResponse{data=models.User}	"User created"
-//	@Failure		400		{object}	utils.JSONResponse						"Malformed payload or missing required fields"
+//	@Failure		400		{object}	utils.JSONResponse						"Malformed payload, missing required fields or invalid phone"
 //	@Failure		409		{object}	utils.JSONResponse						"User already exists"
 //	@Router			/auth/register [post]
 func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
@@ -58,18 +60,46 @@ func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.FirstName == "" || req.LastName == "" || req.Email == "" || req.Password == "" {
+	if req.FirstName == "" || req.LastName == "" || req.Email == "" || req.Phone == "" || req.Password == "" {
 		utils.WriteJSONResponse(w, http.StatusBadRequest, "Missing required fields")
 		return
 	}
 
-	user, token, refresh, err := h.authService.Register(req.FirstName, req.LastName, req.Email, req.Password)
+	phone, ok := normalizePhone(req.Phone)
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "Invalid phone number")
+		return
+	}
+
+	user, token, refresh, err := h.authService.Register(req.FirstName, req.LastName, req.Email, phone, req.Password)
 	if err != nil {
 		utils.WriteJSONResponse(w, http.StatusConflict, err.Error())
 		return
 	}
 	h.setAuthCookies(w, token, refresh)
 	utils.WriteJSONResponse(w, http.StatusCreated, user)
+}
+
+// normalizePhone strips spaces, dashes, dots and parentheses, and accepts an
+// optional leading "+" followed by 7 to 15 digits (E.164 length limits).
+func normalizePhone(raw string) (string, bool) {
+	var b strings.Builder
+	for i, c := range strings.TrimSpace(raw) {
+		switch {
+		case c >= '0' && c <= '9':
+			b.WriteRune(c)
+		case c == '+' && i == 0:
+			b.WriteRune(c)
+		case c == ' ' || c == '-' || c == '.' || c == '(' || c == ')':
+		default:
+			return "", false
+		}
+	}
+	phone := b.String()
+	if n := len(strings.TrimPrefix(phone, "+")); n < 7 || n > 15 {
+		return "", false
+	}
+	return phone, true
 }
 
 // LoginHandler godoc
@@ -168,7 +198,7 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 // MeHandler godoc
 //
 //	@Summary		Get the logged-in user
-//	@Description	Returns the user the access_token cookie belongs to, with their current role read from the database.
+//	@Description	Returns the user the access_token cookie belongs to, with their current role and phone read from the database.
 //	@Tags			auth
 //	@Produce		json
 //	@Success		200	{object}	utils.JSONResponse{data=models.User}	"Logged-in user"

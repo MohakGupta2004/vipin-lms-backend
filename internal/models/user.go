@@ -10,6 +10,7 @@ type RegisterUser struct {
 	FirstName   string
 	LastName    string
 	Email       string
+	Phone       string
 	Password    string
 	LastLoginAt time.Time
 }
@@ -23,10 +24,12 @@ const (
 )
 
 type User struct {
-	ID          string    `json:"id"`
-	FirstName   string    `json:"firstName"`
-	LastName    string    `json:"lastName"`
-	Email       string    `json:"email"`
+	ID        string `json:"id"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Email     string `json:"email"`
+	// Phone is empty for accounts created before phone numbers were collected.
+	Phone       string    `json:"phone"`
 	Password    string    `json:"-"`
 	Role        Role      `json:"role"`
 	LastLoginAt time.Time `json:"lastLoginAt"`
@@ -59,28 +62,29 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 	}
 }
 
-func (r *UserRepository) CreateUser(firstName, lastName, email, password string, ctx context.Context) (*User, error) {
+func (r *UserRepository) CreateUser(firstName, lastName, email, phone, password string, ctx context.Context) (*User, error) {
 	user := &User{
 		FirstName:   firstName,
 		LastName:    lastName,
 		Email:       email,
+		Phone:       phone,
 		Password:    password,
 		LastLoginAt: time.Now(),
 		Role:        RoleStudent,
 	}
 
-	query := "INSERT INTO users (first_name, last_name, email, password, role, last_login_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"
-	row := r.db.QueryRowContext(ctx, query, user.FirstName, user.LastName, user.Email, user.Password, user.Role, user.LastLoginAt).Scan(&user.ID)
+	query := "INSERT INTO users (first_name, last_name, email, phone, password, role, last_login_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
+	row := r.db.QueryRowContext(ctx, query, user.FirstName, user.LastName, user.Email, user.Phone, user.Password, user.Role, user.LastLoginAt).Scan(&user.ID)
 
 	return user, row
 }
 
 func (r *UserRepository) GetUserByEmail(email string, ctx context.Context) (*User, error) {
-	query := "SELECT id, first_name, last_name, email, password, role, last_login_at, email_verified_at IS NOT NULL FROM users WHERE lower(email) = lower($1)"
+	query := "SELECT id, first_name, last_name, email, COALESCE(phone, ''), password, role, last_login_at, email_verified_at IS NOT NULL FROM users WHERE lower(email) = lower($1)"
 	row := r.db.QueryRowContext(ctx, query, email)
 
 	user := &User{}
-	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.Role, &user.LastLoginAt, &user.EmailVerified)
+	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Phone, &user.Password, &user.Role, &user.LastLoginAt, &user.EmailVerified)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // User not found
@@ -91,11 +95,11 @@ func (r *UserRepository) GetUserByEmail(email string, ctx context.Context) (*Use
 	return user, nil
 }
 func (r *UserRepository) GetUserById(id string, ctx context.Context) (*User, error) {
-	query := "SELECT id, first_name, last_name, email, password, role, last_login_at, email_verified_at IS NOT NULL FROM users WHERE id = $1"
+	query := "SELECT id, first_name, last_name, email, COALESCE(phone, ''), password, role, last_login_at, email_verified_at IS NOT NULL FROM users WHERE id = $1"
 	row := r.db.QueryRowContext(ctx, query, id)
 
 	user := &User{}
-	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.Role, &user.LastLoginAt, &user.EmailVerified)
+	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Phone, &user.Password, &user.Role, &user.LastLoginAt, &user.EmailVerified)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // User not found
