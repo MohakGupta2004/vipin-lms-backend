@@ -897,6 +897,155 @@
                 }
             }
         },
+        "/courses/{id}/flashcard-decks": {
+            "get": {
+                "description": "One deck per lesson plus the course-wide deck (lessonId null), with card counts, free card counts and the user's own review progress. The course owner also sees drafts; everyone else only published decks of published lessons.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "List the flashcard decks of a course",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Course ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Decks",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.FlashcardDeck"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Course not found, or not visible to this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Course owner creates the deck of a lesson, or the course-wide deck when lessonId is omitted. A draft by default. One deck per lesson: 409 if it exists.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Create a flashcard deck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Course ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Lesson and status",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateDeckRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Deck created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.FlashcardDeck"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or invalid fields",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not the course owner",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Course or lesson not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "The lesson already has a deck",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/courses/{id}/lessons": {
             "get": {
                 "description": "Returns the course's lessons (chapters) in order, each with its PDF notes. The course instructor and enrolled students (or anyone, for a free course) see it in full; students see published lessons only. Other logged-in users previewing a published course get every published lesson with all its notes; paid lessons and notes not marked free come back with locked=true.",
@@ -1569,6 +1718,681 @@
                 }
             }
         },
+        "/flashcard-decks/{id}": {
+            "delete": {
+                "description": "Course owner only. Soft-deletes the deck and all its cards.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Delete a flashcard deck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deck deleted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not the course owner",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Deck not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Course owner only. Students only see published decks.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Publish a flashcard deck or turn it back into a draft",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New status",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateDeckStatusRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deck updated",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.FlashcardDeck"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or invalid status",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not the course owner",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Deck not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/flashcard-decks/{id}/cards": {
+            "get": {
+                "description": "Cards in order, each with the user's own rating. A user previewing the course (not enrolled in a paid course) gets the paid cards with locked true and front and back blank.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "List the cards of a deck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cards",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.Flashcard"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Deck not found, or not visible to this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Course owner only. The card goes to the end of the deck. front is at most 500 characters, back at most 2000.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Add a flashcard to a deck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Card",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateFlashcardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Card created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Flashcard"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or invalid fields",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not the course owner",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Deck not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/flashcard-decks/{id}/free": {
+            "put": {
+                "description": "Course owner only. Sets isFree on all the deck's cards at once; free cards can be studied by users previewing the course.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Make every card of a deck free or paid",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Free or paid",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SetDeckFreeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deck updated",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.FlashcardDeck"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not the course owner",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Deck not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/flashcard-decks/{id}/session": {
+            "get": {
+                "description": "Distinct cards of the deck in random order; cards rated low by the user come up more often. Users previewing the course only get the free cards.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Study session for a deck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of cards (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cards",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.Flashcard"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid limit",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Deck not found, or not visible to this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/flashcards/{id}": {
+            "delete": {
+                "description": "Course owner only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Delete a flashcard",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Card ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Card deleted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not the course owner",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Card not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Course owner only. Changes only the fields that are sent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Edit a flashcard",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Card ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateFlashcardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Card updated",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Flashcard"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or invalid fields",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not the course owner",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Card not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/flashcards/{id}/review": {
+            "put": {
+                "description": "Students only. Stores the student's latest self-rating, 1 (no idea) to 5 (perfect). Low-rated cards come up more often in sessions.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Rate a flashcard",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Card ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Rating",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ReviewFlashcardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Rating saved",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or rating outside 1 to 5",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a student",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Card not found, or locked for this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/lessons/{id}": {
             "delete": {
                 "description": "Course owner (instructor or admin) deletes a lesson. Its notes and their PDF files are removed. Its quizzes are hidden, but students' past attempts are kept.",
@@ -2188,6 +3012,143 @@
                     },
                     "401": {
                         "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/me/flashcards": {
+            "get": {
+                "description": "Students only. The published decks with cards in the courses the student is enrolled in, with their review progress, plus recent: the deck of the lesson they watched or studied last (null if none).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "My flashcard decks",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Only this course",
+                        "name": "courseId",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Decks",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/service.MyFlashcards"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid courseId",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a student",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/me/flashcards/session": {
+            "get": {
+                "description": "Students only. Distinct cards from the published decks of the student's courses in random order; cards rated low come up more often.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Random mix of flashcards",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Only this course",
+                        "name": "courseId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of cards (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cards",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.Flashcard"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid courseId or limit",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not a student",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -4041,6 +5002,19 @@
                 }
             }
         },
+        "handlers.CreateDeckRequest": {
+            "type": "object",
+            "properties": {
+                "lessonId": {
+                    "description": "omit for the course-wide deck",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "draft or published, defaults to draft",
+                    "type": "string"
+                }
+            }
+        },
         "handlers.CreateEnrollmentRequest": {
             "type": "object",
             "properties": {
@@ -4053,6 +5027,20 @@
                 },
                 "userId": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.CreateFlashcardRequest": {
+            "type": "object",
+            "properties": {
+                "back": {
+                    "type": "string"
+                },
+                "front": {
+                    "type": "string"
+                },
+                "isFree": {
+                    "type": "boolean"
                 }
             }
         },
@@ -4207,6 +5195,23 @@
                 }
             }
         },
+        "handlers.ReviewFlashcardRequest": {
+            "type": "object",
+            "properties": {
+                "rating": {
+                    "description": "1 (no idea) to 5 (perfect)",
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.SetDeckFreeRequest": {
+            "type": "object",
+            "properties": {
+                "isFree": {
+                    "type": "boolean"
+                }
+            }
+        },
         "handlers.SubmitAnswerRequest": {
             "type": "object",
             "properties": {
@@ -4261,12 +5266,35 @@
                 }
             }
         },
+        "handlers.UpdateDeckStatusRequest": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "description": "draft or published",
+                    "type": "string"
+                }
+            }
+        },
         "handlers.UpdateEnrollmentStatusRequest": {
             "type": "object",
             "properties": {
                 "status": {
                     "description": "active, completed, expired or cancelled",
                     "type": "string"
+                }
+            }
+        },
+        "handlers.UpdateFlashcardRequest": {
+            "type": "object",
+            "properties": {
+                "back": {
+                    "type": "string"
+                },
+                "front": {
+                    "type": "string"
+                },
+                "isFree": {
+                    "type": "boolean"
                 }
             }
         },
@@ -4517,6 +5545,9 @@
                 "examId": {
                     "type": "string"
                 },
+                "freeFlashcardCount": {
+                    "type": "integer"
+                },
                 "freeLessonCount": {
                     "type": "integer"
                 },
@@ -4693,6 +5724,78 @@
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.Flashcard": {
+            "type": "object",
+            "properties": {
+                "back": {
+                    "type": "string"
+                },
+                "courseId": {
+                    "type": "string"
+                },
+                "deckId": {
+                    "type": "string"
+                },
+                "front": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isFree": {
+                    "type": "boolean"
+                },
+                "locked": {
+                    "description": "Locked is set for users previewing a course: they see the card exists but cannot study it.",
+                    "type": "boolean"
+                },
+                "myRating": {
+                    "description": "nil = never rated",
+                    "type": "integer"
+                },
+                "position": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.FlashcardDeck": {
+            "type": "object",
+            "properties": {
+                "cardCount": {
+                    "type": "integer"
+                },
+                "courseId": {
+                    "type": "string"
+                },
+                "courseTitle": {
+                    "type": "string"
+                },
+                "freeCardCount": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lessonId": {
+                    "description": "nil = course-wide deck",
+                    "type": "string"
+                },
+                "lessonTitle": {
+                    "type": "string"
+                },
+                "myMastered": {
+                    "description": "cards rated 4 or 5",
+                    "type": "integer"
+                },
+                "myReviewed": {
+                    "type": "integer"
+                },
+                "status": {
+                    "description": "draft or published",
                     "type": "string"
                 }
             }
@@ -5231,6 +6334,20 @@
                 },
                 "updatedAt": {
                     "type": "string"
+                }
+            }
+        },
+        "service.MyFlashcards": {
+            "type": "object",
+            "properties": {
+                "decks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.FlashcardDeck"
+                    }
+                },
+                "recent": {
+                    "$ref": "#/definitions/models.FlashcardDeck"
                 }
             }
         },

@@ -23,7 +23,7 @@ When you are not the owner, you get the same response as for a missing resource.
 ## 0. Setup
 
 ```bash
-make migrate-up        # applies all migrations, up to 30_notes_is_free
+make migrate-up        # applies all migrations, up to 33_create_table_flashcards
 make run               # or: make air
 
 export B=http://localhost:8080/api/v1   # use your PORT
@@ -390,6 +390,39 @@ curl -s "$manifestUrl" | head -2                    # #EXTM3U / #EXT-X-START:TIM
 
 Known limits: videos stuck in `uploading` are not cleaned up (add a bucket lifecycle rule); `duration_sec` stays NULL; `CDN_DOMAIN` as plain `http://` exposes the signed query on the network, and an `https://` page will block `http://` segments (mixed content), so use HTTPS for both API and CDN in prod.
 
+## 15. Flashcards (new)
+
+A deck holds the flashcards of one lesson (or of the whole course when `lessonId` is omitted). Publishing is per deck, free preview per card. Students rate cards 1 to 5; low-rated cards come up more often in sessions.
+
+Needs the owner (`admin.jar`, owns course `$C` with published lesson `$L1`), an enrolled student (`student.jar`) and a user who is not enrolled in the paid course (`P`, `prev.jar`).
+
+| # | Request | Expect |
+|---|---------|--------|
+| 15.1 | Owner: `POST $B/courses/$C/flashcard-decks {"lessonId":"$L1"}` | `201`, `status: draft`, `cardCount: 0` |
+| 15.2 | Same request again | `409` |
+| 15.3 | Owner: `POST $B/courses/$C/flashcard-decks {"status":"published"}` | `201`, `lessonId: null` (course-wide deck) |
+| 15.4 | Owner: `POST $B/flashcard-decks/$D/cards {"front":"Q1","back":"A1","isFree":true}`, then 4 more with `isFree:false` | `201` each; `position` 1 to 5 |
+| 15.5 | Owner: card with empty `front`, or `front` over 500 / `back` over 2000 characters | `400` |
+| 15.6 | Student: `GET $B/flashcard-decks/$D/cards` and `.../session` | `404` while the deck is a draft |
+| 15.7 | Owner: `PATCH $B/flashcard-decks/$D {"status":"published"}` | `200`; student now gets the cards |
+| 15.8 | `P`: `GET $B/flashcard-decks/$D/cards` | 5 cards; the 4 paid have `locked: true` and empty `front`/`back` |
+| 15.9 | `P`: `GET $B/flashcard-decks/$D/session` | Only the free card |
+| 15.10 | Owner: `PUT $B/flashcard-decks/$D/free {"isFree":true}`, then `P` lists cards | All unlocked. `{"isFree":false}` locks them again |
+| 15.11 | Student: `GET $B/flashcard-decks/$D/session?limit=3` | 3 distinct cards; `limit` over 100 is capped, negative is `400` |
+| 15.12 | Student: `PUT $B/flashcards/$F/review {"rating":0}` and `{"rating":6}` | `400` |
+| 15.13 | Student: `PUT $B/flashcards/$F/review {"rating":1}`, then `{"rating":4}` | `200`; `myRating` is 4 after the second |
+| 15.14 | Owner: `PUT $B/flashcards/$F/review {"rating":3}` | `403` (students only) |
+| 15.15 | Student: rate one card 1 and the others 5, then call `GET $B/flashcard-decks/$D/session?limit=1` about 100 times | The card rated 1 comes first about 5 times as often as each card rated 5 |
+| 15.16 | Student: `GET $B/me/flashcards?courseId=$C` | `decks` with `myReviewed`/`myMastered` (rating 4 or 5); `recent` is the deck of the lesson last watched or reviewed, else `null` |
+| 15.17 | Student: `GET $B/me/flashcards/session?courseId=$C` | Distinct cards across the student's courses |
+| 15.18 | Owner: `PATCH $B/flashcards/$F {"front":"New"}` / `DELETE $B/flashcards/$F` | `200`; deleted card is gone from the list |
+| 15.19 | Owner: `GET $B/courses/$C/flashcard-decks` | Drafts included; students and `P` only see published decks |
+| 15.20 | `GET $B/catalog/courses` | `freeFlashcardCount` counts the free cards of published decks |
+| 15.21 | Owner: `DELETE $B/lessons/$L1` | Its deck and cards disappear from every list |
+| 15.22 | Owner: `DELETE $B/flashcard-decks/$D` | `200`; the deck and its cards are gone |
+
+---
+
 ## Migrations added
 
 | File | Change | Down |
@@ -400,3 +433,4 @@ Known limits: videos stuck in `uploading` are not cleaned up (add a bucket lifec
 | `27_create_table_video_progress` | `video_progress(user_id, video_id, position_sec)` for resume | Drops the table |
 | `29_quiz_type` | `quizzes.type` (`mock_test`/`practice`), nullable `pass_percent` | Drops the column; null pass percents become 70 |
 | `30_notes_is_free` | `notes.is_free` for per-note free preview | Drops the column; notes are free again only through their lesson |
+| `33_create_table_flashcards` | `flashcard_decks`, `flashcards`, `flashcard_reviews` | Drops the three tables |

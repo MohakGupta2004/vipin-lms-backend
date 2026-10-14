@@ -97,6 +97,7 @@ func main() {
 	lessonRepo := models.NewLessonRepository(db)
 	noteRepo := models.NewNoteRepository(db)
 	quizRepo := models.NewQuizRepository(db)
+	flashcardRepo := models.NewFlashcardRepository(db)
 	videoRepo := models.NewVideoRepository(db)
 	learningRepo := models.NewLearningRepository(db)
 	otpRepo := models.NewOTPRepository(db)
@@ -110,6 +111,7 @@ func main() {
 	lessonService := service.NewLessonService(lessonRepo, noteRepo, pdfStore)
 	noteService := service.NewNoteService(noteRepo, lessonRepo, pdfStore)
 	quizService := service.NewQuizService(quizRepo, lessonRepo)
+	flashcardService := service.NewFlashcardService(flashcardRepo, lessonRepo)
 	userService := service.NewUserService(userRepo)
 	learningService := service.NewLearningService(learningRepo)
 
@@ -143,6 +145,7 @@ func main() {
 	lessonHandler := handlers.NewLessonHandler(lessonService)
 	noteHandler := handlers.NewNoteHandler(noteService)
 	quizHandler := handlers.NewQuizHandler(quizService)
+	flashcardHandler := handlers.NewFlashcardHandler(flashcardService)
 	userHandler := handlers.NewUserHandler(userService)
 	videoHandler := handlers.NewVideoHandler(videoService)
 	learningHandler := handlers.NewLearningHandler(learningService)
@@ -231,6 +234,21 @@ func main() {
 	mux.Handle("POST /api/v1/quizzes/{id}/check", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.CheckAnswer)))
 	mux.Handle("POST /api/v1/quizzes/{id}/submit", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.SubmitMockTest)))
 	mux.Handle("GET /api/v1/quizzes/{id}/attempts", authMiddleware.RequireAuth(http.HandlerFunc(quizHandler.ListAttempts)))
+
+	// flashcards (course owner writes decks and cards; students study and rate them)
+	mux.Handle("GET /api/v1/courses/{id}/flashcard-decks", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.ListCourseDecks)))
+	mux.Handle("POST /api/v1/courses/{id}/flashcard-decks", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.CreateDeck)))
+	mux.Handle("PATCH /api/v1/flashcard-decks/{id}", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.UpdateDeckStatus)))
+	mux.Handle("PUT /api/v1/flashcard-decks/{id}/free", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.SetDeckFree)))
+	mux.Handle("DELETE /api/v1/flashcard-decks/{id}", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.DeleteDeck)))
+	mux.Handle("GET /api/v1/flashcard-decks/{id}/cards", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.ListDeckCards)))
+	mux.Handle("POST /api/v1/flashcard-decks/{id}/cards", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.CreateCard)))
+	mux.Handle("GET /api/v1/flashcard-decks/{id}/session", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.DeckSession)))
+	mux.Handle("PATCH /api/v1/flashcards/{id}", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.UpdateCard)))
+	mux.Handle("DELETE /api/v1/flashcards/{id}", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.DeleteCard)))
+	mux.Handle("PUT /api/v1/flashcards/{id}/review", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.ReviewCard)))
+	mux.Handle("GET /api/v1/me/flashcards", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.ListMyFlashcards)))
+	mux.Handle("GET /api/v1/me/flashcards/session", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.MixSession)))
 
 	srv := http.Server{
 		Addr:         ":" + cfg.Port,

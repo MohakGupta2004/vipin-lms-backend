@@ -21,6 +21,15 @@ definitions:
       title:
         type: string
     type: object
+  handlers.CreateDeckRequest:
+    properties:
+      lessonId:
+        description: omit for the course-wide deck
+        type: string
+      status:
+        description: draft or published, defaults to draft
+        type: string
+    type: object
   handlers.CreateEnrollmentRequest:
     properties:
       courseId:
@@ -30,6 +39,15 @@ definitions:
         type: integer
       userId:
         type: string
+    type: object
+  handlers.CreateFlashcardRequest:
+    properties:
+      back:
+        type: string
+      front:
+        type: string
+      isFree:
+        type: boolean
     type: object
   handlers.CreateLessonRequest:
     properties:
@@ -131,6 +149,17 @@ definitions:
       resetToken:
         type: string
     type: object
+  handlers.ReviewFlashcardRequest:
+    properties:
+      rating:
+        description: 1 (no idea) to 5 (perfect)
+        type: integer
+    type: object
+  handlers.SetDeckFreeRequest:
+    properties:
+      isFree:
+        type: boolean
+    type: object
   handlers.SubmitAnswerRequest:
     properties:
       optionId:
@@ -166,11 +195,26 @@ definitions:
         description: draft, published or archived
         type: string
     type: object
+  handlers.UpdateDeckStatusRequest:
+    properties:
+      status:
+        description: draft or published
+        type: string
+    type: object
   handlers.UpdateEnrollmentStatusRequest:
     properties:
       status:
         description: active, completed, expired or cancelled
         type: string
+    type: object
+  handlers.UpdateFlashcardRequest:
+    properties:
+      back:
+        type: string
+      front:
+        type: string
+      isFree:
+        type: boolean
     type: object
   handlers.UpdateLessonRequest:
     properties:
@@ -338,6 +382,8 @@ definitions:
         type: boolean
       examId:
         type: string
+      freeFlashcardCount:
+        type: integer
       freeLessonCount:
         type: integer
       freeNoteCount:
@@ -462,6 +508,56 @@ definitions:
       id:
         type: string
       name:
+        type: string
+    type: object
+  models.Flashcard:
+    properties:
+      back:
+        type: string
+      courseId:
+        type: string
+      deckId:
+        type: string
+      front:
+        type: string
+      id:
+        type: string
+      isFree:
+        type: boolean
+      locked:
+        description: 'Locked is set for users previewing a course: they see the card
+          exists but cannot study it.'
+        type: boolean
+      myRating:
+        description: nil = never rated
+        type: integer
+      position:
+        type: integer
+    type: object
+  models.FlashcardDeck:
+    properties:
+      cardCount:
+        type: integer
+      courseId:
+        type: string
+      courseTitle:
+        type: string
+      freeCardCount:
+        type: integer
+      id:
+        type: string
+      lessonId:
+        description: nil = course-wide deck
+        type: string
+      lessonTitle:
+        type: string
+      myMastered:
+        description: cards rated 4 or 5
+        type: integer
+      myReviewed:
+        type: integer
+      status:
+        description: draft or published
         type: string
     type: object
   models.Lesson:
@@ -837,6 +933,15 @@ definitions:
         type: integer
       updatedAt:
         type: string
+    type: object
+  service.MyFlashcards:
+    properties:
+      decks:
+        items:
+          $ref: '#/definitions/models.FlashcardDeck'
+        type: array
+      recent:
+        $ref: '#/definitions/models.FlashcardDeck'
     type: object
   service.ProgressSummary:
     properties:
@@ -1435,6 +1540,104 @@ paths:
       summary: Edit a course
       tags:
       - courses
+  /courses/{id}/flashcard-decks:
+    get:
+      description: One deck per lesson plus the course-wide deck (lessonId null),
+        with card counts, free card counts and the user's own review progress. The
+        course owner also sees drafts; everyone else only published decks of published
+        lessons.
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Decks
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.FlashcardDeck'
+                  type: array
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List the flashcard decks of a course
+      tags:
+      - flashcards
+    post:
+      consumes:
+      - application/json
+      description: 'Course owner creates the deck of a lesson, or the course-wide
+        deck when lessonId is omitted. A draft by default. One deck per lesson: 409
+        if it exists.'
+      parameters:
+      - description: Course ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Lesson and status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateDeckRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Deck created
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.FlashcardDeck'
+              type: object
+        "400":
+          description: Malformed payload or invalid fields
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the course owner
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Course or lesson not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "409":
+          description: The lesson already has a deck
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Create a flashcard deck
+      tags:
+      - flashcards
   /courses/{id}/lessons:
     get:
       description: Returns the course's lessons (chapters) in order, each with its
@@ -1868,6 +2071,434 @@ paths:
       summary: List exams
       tags:
       - exams
+  /flashcard-decks/{id}:
+    delete:
+      description: Course owner only. Soft-deletes the deck and all its cards.
+      parameters:
+      - description: Deck ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deck deleted
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the course owner
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Deck not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Delete a flashcard deck
+      tags:
+      - flashcards
+    patch:
+      consumes:
+      - application/json
+      description: Course owner only. Students only see published decks.
+      parameters:
+      - description: Deck ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateDeckStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deck updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.FlashcardDeck'
+              type: object
+        "400":
+          description: Malformed payload or invalid status
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the course owner
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Deck not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Publish a flashcard deck or turn it back into a draft
+      tags:
+      - flashcards
+  /flashcard-decks/{id}/cards:
+    get:
+      description: Cards in order, each with the user's own rating. A user previewing
+        the course (not enrolled in a paid course) gets the paid cards with locked
+        true and front and back blank.
+      parameters:
+      - description: Deck ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cards
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.Flashcard'
+                  type: array
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Deck not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List the cards of a deck
+      tags:
+      - flashcards
+    post:
+      consumes:
+      - application/json
+      description: Course owner only. The card goes to the end of the deck. front
+        is at most 500 characters, back at most 2000.
+      parameters:
+      - description: Deck ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Card
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateFlashcardRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Card created
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Flashcard'
+              type: object
+        "400":
+          description: Malformed payload or invalid fields
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the course owner
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Deck not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Add a flashcard to a deck
+      tags:
+      - flashcards
+  /flashcard-decks/{id}/free:
+    put:
+      consumes:
+      - application/json
+      description: Course owner only. Sets isFree on all the deck's cards at once;
+        free cards can be studied by users previewing the course.
+      parameters:
+      - description: Deck ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Free or paid
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SetDeckFreeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deck updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.FlashcardDeck'
+              type: object
+        "400":
+          description: Malformed payload
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the course owner
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Deck not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Make every card of a deck free or paid
+      tags:
+      - flashcards
+  /flashcard-decks/{id}/session:
+    get:
+      description: Distinct cards of the deck in random order; cards rated low by
+        the user come up more often. Users previewing the course only get the free
+        cards.
+      parameters:
+      - description: Deck ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Number of cards (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cards
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.Flashcard'
+                  type: array
+              type: object
+        "400":
+          description: Invalid limit
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Deck not found, or not visible to this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Study session for a deck
+      tags:
+      - flashcards
+  /flashcards/{id}:
+    delete:
+      description: Course owner only.
+      parameters:
+      - description: Card ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Card deleted
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the course owner
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Card not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Delete a flashcard
+      tags:
+      - flashcards
+    patch:
+      consumes:
+      - application/json
+      description: Course owner only. Changes only the fields that are sent.
+      parameters:
+      - description: Card ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateFlashcardRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Card updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Flashcard'
+              type: object
+        "400":
+          description: Malformed payload or invalid fields
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the course owner
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Card not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Edit a flashcard
+      tags:
+      - flashcards
+  /flashcards/{id}/review:
+    put:
+      consumes:
+      - application/json
+      description: Students only. Stores the student's latest self-rating, 1 (no idea)
+        to 5 (perfect). Low-rated cards come up more often in sessions.
+      parameters:
+      - description: Card ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Rating
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ReviewFlashcardRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Rating saved
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: Malformed payload or rating outside 1 to 5
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not a student
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Card not found, or locked for this user
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Rate a flashcard
+      tags:
+      - flashcards
   /lessons/{id}:
     delete:
       description: Course owner (instructor or admin) deletes a lesson. Its notes
@@ -2284,6 +2915,93 @@ paths:
       summary: List my courses
       tags:
       - courses
+  /me/flashcards:
+    get:
+      description: 'Students only. The published decks with cards in the courses the
+        student is enrolled in, with their review progress, plus recent: the deck
+        of the lesson they watched or studied last (null if none).'
+      parameters:
+      - description: Only this course
+        in: query
+        name: courseId
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Decks
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/service.MyFlashcards'
+              type: object
+        "400":
+          description: Invalid courseId
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not a student
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: My flashcard decks
+      tags:
+      - me
+  /me/flashcards/session:
+    get:
+      description: Students only. Distinct cards from the published decks of the student's
+        courses in random order; cards rated low come up more often.
+      parameters:
+      - description: Only this course
+        in: query
+        name: courseId
+        type: string
+      - description: Number of cards (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cards
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.Flashcard'
+                  type: array
+              type: object
+        "400":
+          description: Invalid courseId or limit
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not a student
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Random mix of flashcards
+      tags:
+      - me
   /me/progress:
     get:
       description: 'Counts across the user''s courses, overall (totals) and per course:

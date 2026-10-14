@@ -26,14 +26,15 @@ type Course struct {
 // CatalogCourse is a published course as the catalog shows it, with how much of it is free to preview.
 type CatalogCourse struct {
 	Course
-	InstructorName  string `json:"instructorName"`
-	Enrolled        bool   `json:"enrolled"`
-	LessonCount     int    `json:"lessonCount"`
-	VideoCount      int    `json:"videoCount"`
-	FreeLessonCount int    `json:"freeLessonCount"`
-	FreeVideoCount  int    `json:"freeVideoCount"`
-	FreeNoteCount   int    `json:"freeNoteCount"`
-	FreeQuizCount   int    `json:"freeQuizCount"`
+	InstructorName     string `json:"instructorName"`
+	Enrolled           bool   `json:"enrolled"`
+	LessonCount        int    `json:"lessonCount"`
+	VideoCount         int    `json:"videoCount"`
+	FreeLessonCount    int    `json:"freeLessonCount"`
+	FreeVideoCount     int    `json:"freeVideoCount"`
+	FreeNoteCount      int    `json:"freeNoteCount"`
+	FreeQuizCount      int    `json:"freeQuizCount"`
+	FreeFlashcardCount int    `json:"freeFlashcardCount"`
 }
 
 type CourseRepository struct {
@@ -144,7 +145,11 @@ func (r *CourseRepository) ListCatalog(ctx context.Context, userID string, freeO
 			           AND n.deleted_at IS NULL AND l.is_published AND (c.is_free OR n.is_free)) AS free_notes,
 			       (SELECT COUNT(*) FROM quizzes q JOIN lessons l ON l.id = q.lesson_id AND l.deleted_at IS NULL
 			         WHERE q.course_id = c.id AND q.deleted_at IS NULL AND q.status = 'published'
-			           AND l.is_published AND (c.is_free OR q.is_free)) AS free_quizzes
+			           AND l.is_published AND (c.is_free OR q.is_free)) AS free_quizzes,
+			       (SELECT COUNT(*) FROM flashcards f JOIN flashcard_decks d ON d.id = f.deck_id AND d.deleted_at IS NULL
+			         LEFT JOIN lessons l ON l.id = d.lesson_id AND l.deleted_at IS NULL
+			         WHERE f.course_id = c.id AND f.deleted_at IS NULL AND d.status = 'published'
+			           AND (d.lesson_id IS NULL OR l.is_published) AND (c.is_free OR f.is_free)) AS free_flashcards
 			FROM courses c
 			WHERE c.status = 'published' AND c.deleted_at IS NULL
 		)
@@ -157,11 +162,11 @@ func (r *CourseRepository) ListCatalog(ctx context.Context, userID string, freeO
 		             AND e.status IN ('active', 'completed')
 		             AND (e.expires_at IS NULL OR e.expires_at > now())
 		       ),
-		       s.lessons, s.videos, s.free_lessons, s.free_videos, s.free_notes, s.free_quizzes
+		       s.lessons, s.videos, s.free_lessons, s.free_videos, s.free_notes, s.free_quizzes, s.free_flashcards
 		FROM courses c
 		JOIN stats s ON s.id = c.id
 		JOIN users u ON u.id = c.instructor_id
-		WHERE NOT $2 OR (s.free_lessons + s.free_videos + s.free_notes + s.free_quizzes) > 0
+		WHERE NOT $2 OR (s.free_lessons + s.free_videos + s.free_notes + s.free_quizzes + s.free_flashcards) > 0
 		ORDER BY c.created_at DESC, c.id DESC
 		LIMIT $3 OFFSET $4`
 
@@ -177,7 +182,7 @@ func (r *CourseRepository) ListCatalog(ctx context.Context, userID string, freeO
 		err := rows.Scan(&c.ID, &c.ExamID, &c.InstructorID, &c.Title, &c.Slug,
 			&c.ShortDescription, &c.Description, &c.Status, &c.IsFree, &c.CreatedAt,
 			&c.InstructorName, &c.Enrolled,
-			&c.LessonCount, &c.VideoCount, &c.FreeLessonCount, &c.FreeVideoCount, &c.FreeNoteCount, &c.FreeQuizCount)
+			&c.LessonCount, &c.VideoCount, &c.FreeLessonCount, &c.FreeVideoCount, &c.FreeNoteCount, &c.FreeQuizCount, &c.FreeFlashcardCount)
 		if err != nil {
 			return nil, err
 		}

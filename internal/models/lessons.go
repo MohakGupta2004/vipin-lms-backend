@@ -174,6 +174,16 @@ func (r *LessonRepository) DeleteLesson(ctx context.Context, lessonID string) (o
 		return nil, err
 	}
 
+	_, err = tx.ExecContext(ctx, `UPDATE flashcards SET deleted_at = now()
+		WHERE deck_id IN (SELECT id FROM flashcard_decks WHERE lesson_id = $1) AND deleted_at IS NULL`, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE flashcard_decks SET deleted_at = now() WHERE lesson_id = $1 AND deleted_at IS NULL", lessonID)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
