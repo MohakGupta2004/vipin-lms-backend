@@ -90,3 +90,19 @@ func TestAddStartTime(t *testing.T) {
 		t.Errorf("non-playlist changed: %q", got)
 	}
 }
+
+func TestValidateVideoDescription(t *testing.T) {
+	ok := make([]rune, maxVideoDescriptionChars)
+	for i := range ok {
+		ok[i] = 'é' // multi-byte: the limit counts characters, not bytes
+	}
+	if err := validateVideoDescription(""); err != nil {
+		t.Errorf("empty description: %v", err)
+	}
+	if err := validateVideoDescription(string(ok)); err != nil {
+		t.Errorf("%d characters: %v", maxVideoDescriptionChars, err)
+	}
+	if err := validateVideoDescription(string(ok) + "x"); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("%d characters: got %v, want ErrInvalidInput", maxVideoDescriptionChars+1, err)
+	}
+}

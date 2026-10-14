@@ -2898,7 +2898,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "File name and whether the video is free to watch",
+                        "description": "File name, optional description, and whether the video is free to watch",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -4495,6 +4495,87 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "patch": {
+                "description": "The uploader (who must still own the course) changes the title or the description students see under the player. Omitted fields are left as they are; an empty description removes it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "videos"
+                ],
+                "summary": "Edit a video's title and description",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Video ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.updateVideoBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated video",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/handlers.VideoResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body, empty title, or description too long",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an instructor",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Video not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
             }
         },
         "/videos/{id}/completion": {
@@ -5484,6 +5565,10 @@ const docTemplate = `{
         "handlers.requestVideoUploadBody": {
             "type": "object",
             "properties": {
+                "description": {
+                    "description": "optional, what the lecture covers",
+                    "type": "string"
+                },
                 "fileName": {
                     "type": "string"
                 },
@@ -5509,6 +5594,17 @@ const docTemplate = `{
             "properties": {
                 "completed": {
                     "type": "boolean"
+                }
+            }
+        },
+        "handlers.updateVideoBody": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },
@@ -5964,6 +6060,10 @@ const docTemplate = `{
                 "createdAt": {
                     "type": "string"
                 },
+                "description": {
+                    "description": "Description is what the lecture covers, shown under the player. \"\" = none written.",
+                    "type": "string"
+                },
                 "error": {
                     "type": "string"
                 },
@@ -6286,6 +6386,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "description": "Description is what the lecture covers, shown under the player. \"\" = none written.",
                     "type": "string"
                 },
                 "error": {

@@ -11,7 +11,7 @@ import (
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/service"
 )
 
-const maxVideoRequestBytes = 4 << 10 // 4 KB
+const maxVideoRequestBytes = 32 << 10 // 32 KB, room for a 5000-character description
 
 type VideoHandler struct {
 	videoService *service.VideoService
@@ -22,8 +22,15 @@ func NewVideoHandler(videoService *service.VideoService) *VideoHandler {
 }
 
 type requestVideoUploadBody struct {
-	FileName string `json:"fileName"`
-	IsFree   bool   `json:"isFree"`
+	FileName    string `json:"fileName"`
+	Description string `json:"description"` // optional, what the lecture covers
+	IsFree      bool   `json:"isFree"`
+}
+
+// updateVideoBody holds the video fields to change; omitted fields stay as they are.
+type updateVideoBody struct {
+	Title       *string `json:"title"`
+	Description *string `json:"description"`
 }
 
 // VideoUploadResponse is a new video plus the signed URL to upload its file to.
@@ -48,7 +55,7 @@ type VideoResponse struct {
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string											true	"Lesson ID"
-//	@Param			body	body		requestVideoUploadBody							true	"File name and whether the video is free to watch"
+//	@Param			body	body		requestVideoUploadBody							true	"File name, optional description, and whether the video is free to watch"
 //	@Success		201		{object}	utils.JSONResponse{data=VideoUploadResponse}	"Upload started"
 //	@Failure		400		{object}	utils.JSONResponse								"Invalid body or unsupported file name"
 //	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
@@ -73,7 +80,7 @@ func (h *VideoHandler) RequestUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	up, err := h.videoService.RequestUpload(r.Context(), user, r.PathValue("id"), body.FileName, body.IsFree)
+	up, err := h.videoService.RequestUpload(r.Context(), user, r.PathValue("id"), body.FileName, body.Description, body.IsFree)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -167,6 +174,47 @@ func (h *VideoHandler) GetVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	video, err := h.videoService.GetVideo(r.Context(), user, r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, VideoResponse{Video: video})
+}
+
+// UpdateVideo godoc
+//
+//	@Summary		Edit a video's title and description
+//	@Description	The uploader (who must still own the course) changes the title or the description students see under the player. Omitted fields are left as they are; an empty description removes it.
+//	@Tags			videos
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string									true	"Video ID"
+//	@Param			body	body		updateVideoBody							true	"Fields to change"
+//	@Success		200		{object}	utils.JSONResponse{data=VideoResponse}	"Updated video"
+//	@Failure		400		{object}	utils.JSONResponse						"Invalid body, empty title, or description too long"
+//	@Failure		401		{object}	utils.JSONResponse						"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse						"Not an instructor"
+//	@Failure		404		{object}	utils.JSONResponse						"Video not found"
+//	@Failure		500		{object}	utils.JSONResponse						"Internal server error"
+//	@Router			/videos/{id} [patch]
+func (h *VideoHandler) UpdateVideo(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxVideoRequestBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	var body updateVideoBody
+	if err := dec.Decode(&body); err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	video, err := h.videoService.UpdateVideo(r.Context(), user, r.PathValue("id"),
+		service.UpdateVideoInput{Title: body.Title, Description: body.Description})
 	if err != nil {
 		writeServiceError(w, err)
 		return

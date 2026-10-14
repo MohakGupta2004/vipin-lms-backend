@@ -12,17 +12,19 @@ const maxVideoErrorChars = 1000
 
 // Video is an uploaded lesson video. Lifecycle: uploading → processing → ready | failed.
 type Video struct {
-	ID         string    `json:"id"`
-	LessonID   string    `json:"lessonId"`
-	CourseID   string    `json:"courseId"`
-	Title      string    `json:"title"`
-	IsFree     bool      `json:"isFree"`
-	Status     string    `json:"status"`
-	Error      string    `json:"error,omitempty"`
-	SizeBytes  int64     `json:"sizeBytes,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
-	UploadedBy string    `json:"-"`
+	ID       string `json:"id"`
+	LessonID string `json:"lessonId"`
+	CourseID string `json:"courseId"`
+	Title    string `json:"title"`
+	// Description is what the lecture covers, shown under the player. "" = none written.
+	Description string    `json:"description"`
+	IsFree      bool      `json:"isFree"`
+	Status      string    `json:"status"`
+	Error       string    `json:"error,omitempty"`
+	SizeBytes   int64     `json:"sizeBytes,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+	UploadedBy  string    `json:"-"`
 	// Locked is set for users previewing a course: they see the title but cannot stream it.
 	Locked bool `json:"locked,omitempty"`
 	// Progress is the requesting user's own playback of this video, when listed for a viewer. Nil = never played.
@@ -68,7 +70,7 @@ func NewVideoRepository(db *sql.DB) *VideoRepository {
 }
 
 // videoColumns are the columns scanVideo reads, from videos aliased v.
-const videoColumns = `v.id, COALESCE(v.lesson_id::text, ''), COALESCE(v.course_id::text, ''), v.uploaded_by, v.title, v.is_free,
+const videoColumns = `v.id, COALESCE(v.lesson_id::text, ''), COALESCE(v.course_id::text, ''), v.uploaded_by, v.title, COALESCE(v.description, ''), v.is_free,
 		v.status, COALESCE(v.error, ''), COALESCE(v.size_bytes, 0), v.created_at, v.updated_at,
 		v.original_key, COALESCE(v.transcode_job, ''), COALESCE(v.hls_prefix, '')`
 
@@ -76,17 +78,17 @@ const videoSelect = `SELECT ` + videoColumns + `
 	FROM videos v`
 
 func scanVideo(row interface{ Scan(...any) error }, v *Video) error {
-	return row.Scan(&v.ID, &v.LessonID, &v.CourseID, &v.UploadedBy, &v.Title, &v.IsFree,
+	return row.Scan(&v.ID, &v.LessonID, &v.CourseID, &v.UploadedBy, &v.Title, &v.Description, &v.IsFree,
 		&v.Status, &v.Error, &v.SizeBytes, &v.CreatedAt, &v.UpdatedAt,
 		&v.OriginalKey, &v.TranscodeJob, &v.HLSPrefix)
 }
 
 // Create inserts a video in the 'uploading' state. v.ID must be set by the caller (it is part of the object key).
 func (r *VideoRepository) Create(ctx context.Context, v *Video) error {
-	query := `INSERT INTO videos (id, uploaded_by, course_id, lesson_id, title, is_free, original_key)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	query := `INSERT INTO videos (id, uploaded_by, course_id, lesson_id, title, description, is_free, original_key)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8)
 		RETURNING status, created_at, updated_at`
-	return r.db.QueryRowContext(ctx, query, v.ID, v.UploadedBy, v.CourseID, v.LessonID, v.Title, v.IsFree, v.OriginalKey).
+	return r.db.QueryRowContext(ctx, query, v.ID, v.UploadedBy, v.CourseID, v.LessonID, v.Title, v.Description, v.IsFree, v.OriginalKey).
 		Scan(&v.Status, &v.CreatedAt, &v.UpdatedAt)
 }
 
@@ -131,6 +133,11 @@ func (r *VideoRepository) List(ctx context.Context, f VideoListFilter) ([]Video,
 		videos = append(videos, v)
 	}
 	return videos, rows.Err()
+}
+
+// UpdateDetails saves a video's title and description. It returns sql.ErrNoRows if the video does not exist.
+func (r *VideoRepository) UpdateDetails(ctx context.Context, id, title, description string) error {
+	return r.mustAffect(ctx, `UPDATE videos SET title = $2, description = NULLIF($3, '') WHERE id = $1`, id, title, description)
 }
 
 // MarkProcessing moves an 'uploading' video to 'processing'. It returns sql.ErrNoRows if the video is

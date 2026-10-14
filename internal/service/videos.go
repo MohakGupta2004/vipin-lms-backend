@@ -22,6 +22,9 @@ import (
 
 const (
 	maxVideoFileNameChars = 255
+	maxVideoTitleChars    = 255
+	// maxVideoDescriptionChars caps a lecture description, a few paragraphs of plain text.
+	maxVideoDescriptionChars = 5000
 	// streamURLExpiry is short so a leaked URL stops working soon; clients refetch before expiresAt.
 	streamURLExpiry = 15 * time.Minute
 	// maxPlaylistBytes caps an .m3u8 file read from storage; real ones are a few KB.
@@ -73,11 +76,28 @@ type VideoUpload struct {
 	ExpiresAt time.Time
 }
 
+// UpdateVideoInput holds the video fields to change. Nil fields are left as they are.
+type UpdateVideoInput struct {
+	Title       *string
+	Description *string
+}
+
+func validateVideoDescription(description string) error {
+	if utf8.RuneCountInString(description) > maxVideoDescriptionChars {
+		return fmt.Errorf("%w: description must be at most %d characters", ErrInvalidInput, maxVideoDescriptionChars)
+	}
+	return nil
+}
+
 // RequestUpload lets the course owner start a video upload on a lesson of their course.
 // It creates the video row ('uploading') and returns a signed PUT URL straight to the bucket.
-func (s *VideoService) RequestUpload(ctx context.Context, user *models.User, lessonID, fileName string, isFree bool) (*VideoUpload, error) {
+func (s *VideoService) RequestUpload(ctx context.Context, user *models.User, lessonID, fileName, description string, isFree bool) (*VideoUpload, error) {
 	if !user.CanTeach() {
 		return nil, ErrForbidden
+	}
+	description = strings.TrimSpace(description)
+	if err := validateVideoDescription(description); err != nil {
+		return nil, err
 	}
 	if !s.store.Enabled() {
 		return nil, ErrStorageDisabled
@@ -108,6 +128,7 @@ func (s *VideoService) RequestUpload(ctx context.Context, user *models.User, les
 		CourseID:    lesson.CourseID,
 		UploadedBy:  user.ID,
 		Title:       name,
+		Description: description,
 		IsFree:      isFree,
 		OriginalKey: key,
 	}
@@ -207,6 +228,34 @@ func (s *VideoService) RetryTranscode(ctx context.Context, user *models.User, vi
 
 	video.Status = "processing"
 	video.Error = ""
+	return video, nil
+}
+
+// UpdateVideo lets the person who uploaded a video change its title and description.
+func (s *VideoService) UpdateVideo(ctx context.Context, user *models.User, videoID string, in UpdateVideoInput) (*models.Video, error) {
+	video, err := s.ownedVideo(ctx, user, videoID)
+	if err != nil {
+		return nil, err
+	}
+	if in.Title != nil {
+		video.Title = strings.TrimSpace(*in.Title)
+	}
+	if in.Description != nil {
+		video.Description = strings.TrimSpace(*in.Description)
+	}
+	if n := utf8.RuneCountInString(video.Title); n < 1 || n > maxVideoTitleChars {
+		return nil, fmt.Errorf("%w: title must be 1 to %d characters", ErrInvalidInput, maxVideoTitleChars)
+	}
+	if err := validateVideoDescription(video.Description); err != nil {
+		return nil, err
+	}
+	err = s.videoRepo.UpdateDetails(ctx, video.ID, video.Title, video.Description)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrVideoNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
 	return video, nil
 }
 

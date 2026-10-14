@@ -334,6 +334,9 @@ definitions:
     type: object
   handlers.requestVideoUploadBody:
     properties:
+      description:
+        description: optional, what the lecture covers
+        type: string
       fileName:
         type: string
       isFree:
@@ -352,6 +355,13 @@ definitions:
     properties:
       completed:
         type: boolean
+    type: object
+  handlers.updateVideoBody:
+    properties:
+      description:
+        type: string
+      title:
+        type: string
     type: object
   models.AttemptAnswer:
     properties:
@@ -671,6 +681,10 @@ definitions:
         type: string
       createdAt:
         type: string
+      description:
+        description: Description is what the lecture covers, shown under the player.
+          "" = none written.
+        type: string
       error:
         type: string
       id:
@@ -894,6 +908,10 @@ definitions:
       courseId:
         type: string
       createdAt:
+        type: string
+      description:
+        description: Description is what the lecture covers, shown under the player.
+          "" = none written.
         type: string
       error:
         type: string
@@ -2827,7 +2845,8 @@ paths:
         name: id
         required: true
         type: string
-      - description: File name and whether the video is free to watch
+      - description: File name, optional description, and whether the video is free
+          to watch
         in: body
         name: body
         required: true
@@ -3873,6 +3892,59 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Get a video's upload and transcoding status
+      tags:
+      - videos
+    patch:
+      consumes:
+      - application/json
+      description: The uploader (who must still own the course) changes the title
+        or the description students see under the player. Omitted fields are left
+        as they are; an empty description removes it.
+      parameters:
+      - description: Video ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.updateVideoBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated video
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.VideoResponse'
+              type: object
+        "400":
+          description: Invalid body, empty title, or description too long
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Video not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Edit a video's title and description
       tags:
       - videos
   /videos/{id}/completion:

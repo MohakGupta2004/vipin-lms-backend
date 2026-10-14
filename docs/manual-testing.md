@@ -23,7 +23,7 @@ When you are not the owner, you get the same response as for a missing resource.
 ## 0. Setup
 
 ```bash
-make migrate-up        # applies all migrations, up to 33_create_table_flashcards
+make migrate-up        # applies all migrations, up to 34_videos_description
 make run               # or: make air
 
 export B=http://localhost:8080/api/v1   # use your PORT
@@ -423,6 +423,23 @@ Needs the owner (`admin.jar`, owns course `$C` with published lesson `$L1`), an 
 
 ---
 
+## 16. Video descriptions (new)
+
+Each video has an optional `description` (what the lecture covers), shown under the player in place of the course description. Needs the owner who uploaded video `$V` (`admin.jar`) and an enrolled student (`student.jar`).
+
+| # | Request | Expect |
+|---|---------|--------|
+| 16.1 | Owner: `POST $B/lessons/$L1/videos {"fileName":"a.mp4","description":"  Covers X  ","isFree":false}` | `201`; `video.description` is `"Covers X"` (trimmed) |
+| 16.2 | Owner: upload without `description` | `201`; `description: ""` |
+| 16.3 | Owner: `PATCH $B/videos/$V {"description":"What this lecture covers"}` | `200`; title unchanged |
+| 16.4 | Owner: `PATCH $B/videos/$V {"title":"Lecture 1"}` | `200`; description unchanged |
+| 16.5 | Owner: `PATCH $B/videos/$V {"description":""}` | `200`; description removed |
+| 16.6 | Owner: `PATCH` with `title` blank, or `description` over 5000 characters | `400` |
+| 16.7 | Student: `PATCH $B/videos/$V {...}` | `403` |
+| 16.8 | Student: `GET $B/courses/$C/videos` and `GET $B/me/videos` | Each video carries `description` |
+
+---
+
 ## Migrations added
 
 | File | Change | Down |
@@ -434,3 +451,4 @@ Needs the owner (`admin.jar`, owns course `$C` with published lesson `$L1`), an 
 | `29_quiz_type` | `quizzes.type` (`mock_test`/`practice`), nullable `pass_percent` | Drops the column; null pass percents become 70 |
 | `30_notes_is_free` | `notes.is_free` for per-note free preview | Drops the column; notes are free again only through their lesson |
 | `33_create_table_flashcards` | `flashcard_decks`, `flashcards`, `flashcard_reviews` | Drops the three tables |
+| `34_videos_description` | Nullable `videos.description` | Drops the column |
