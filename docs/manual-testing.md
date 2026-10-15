@@ -274,7 +274,7 @@ A note or quiz is open to users previewing a published paid course only when it 
 | 10b.2 | Owner: same with `-F title=Paid` and no `isFree` | `201`, `isFree: false`. Save as `NP` |
 | 10b.3 | Owner: same with `-F isFree=maybe` | `400` |
 | 10b.4 | `P`: `GET $B/courses/$C/notes?lessonId=$L1` | Both notes; `NP` has `locked: true`, `NF` has no `locked` |
-| 10b.5 | `P`: `GET $B/notes/$NF/file` / `GET $B/notes/$NP/file` | `200` PDF / `404` |
+| 10b.5 | `P`: `GET $B/notes/$NF/file` / `GET $B/notes/$NP/file` | `200` scrambled PDF (key, counter, AES-CTR body) / `404` |
 | 10b.6 | `P`: `GET $B/courses/$C/lessons` | `L1` is `locked`, its `notes` list both, `NP` locked |
 | 10b.7 | Owner: `PATCH $B/notes/$NP {"isFree":true}` | `200`, `isFree: true`; `P` can now download it |
 | 10b.8 | Non-owner instructor: `PATCH $B/notes/$NP {"isFree":false}` | `404` |

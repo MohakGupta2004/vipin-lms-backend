@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
-	"mime"
 	"net/http"
 	"strconv"
 	"time"
@@ -23,6 +25,7 @@ const (
 	defaultNoteLimit    = 50
 	maxNoteLimit        = 100
 	maxNoteUpdateBytes  = 16 << 10 // title and description with room for multi-byte text
+	noteKeyBytes        = 16       // AES-128 key, then a 16-byte initial counter block
 )
 
 // UpdateNoteRequest changes only the fields that are sent.
@@ -153,11 +156,11 @@ func (h *NoteHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
 // DownloadNote godoc
 //
 //	@Summary		Download a note
-//	@Description	Streams the PDF. The course instructor and enrolled students can download it; users previewing a published course only if the note is marked free.
+//	@Description	Streams the PDF scrambled so the raw response (address bar, DevTools "save response") is not a usable file. Body: a 16-byte AES-128 key, a 16-byte initial counter block, then the PDF encrypted with AES-CTR (the whole 128-bit block is the counter). The key is fresh per response; this only deters casual downloads, the app's viewer decrypts it in memory. The course instructor and enrolled students can open it; users previewing a published course only if the note is marked free.
 //	@Tags			notes
-//	@Produce		application/pdf
+//	@Produce		application/octet-stream
 //	@Param			id	path		string				true	"Note ID"
-//	@Success		200	{file}		file				"PDF file"
+//	@Success		200	{file}		file				"Key, counter block, then the AES-CTR encrypted PDF"
 //	@Failure		401	{object}	utils.JSONResponse	"Not logged in"
 //	@Failure		404	{object}	utils.JSONResponse	"Note not found, or not visible to this user"
 //	@Failure		500	{object}	utils.JSONResponse	"Internal server error"
@@ -177,15 +180,29 @@ func (h *NoteHandler) DownloadNote(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
+	// Scramble the PDF so opening this URL directly, or saving it from DevTools, gives no usable file.
+	// The key travels with the body: it stops casual downloads, not someone reading the app's code.
+	head := make([]byte, 2*noteKeyBytes)
+	_, _ = rand.Read(head)
+	block, err := aes.NewCipher(head[:noteKeyBytes])
+	if err != nil {
+		utils.WriteJSONResponse(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	stream := cipher.NewCTR(block, head[noteKeyBytes:])
+
 	extendDeadlines(w)
 	hdr := w.Header()
-	hdr.Set("Content-Type", "application/pdf")
-	hdr.Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": note.FileName}))
-	hdr.Set("Content-Length", strconv.FormatInt(note.SizeBytes, 10))
+	hdr.Set("Content-Type", "application/octet-stream")
+	hdr.Set("Content-Length", strconv.FormatInt(int64(len(head))+note.SizeBytes, 10))
 	hdr.Set("Cache-Control", "private, no-store")
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("Content-Security-Policy", "sandbox")
-	if _, err := io.Copy(w, rc); err != nil {
+	if _, err := w.Write(head); err != nil {
+		slog.Error("note download interrupted", "noteId", note.ID, "err", err)
+		return
+	}
+	if _, err := io.Copy(cipher.StreamWriter{S: stream, W: w}, rc); err != nil {
 		// Headers are already sent, so all we can do is log.
 		slog.Error("note download interrupted", "noteId", note.ID, "err", err)
 	}

@@ -3495,9 +3495,9 @@ const docTemplate = `{
         },
         "/notes/{id}/file": {
             "get": {
-                "description": "Streams the PDF. The course instructor and enrolled students can download it; users previewing a published course only if the note is marked free.",
+                "description": "Streams the PDF scrambled so the raw response (address bar, DevTools \"save response\") is not a usable file. Body: a 16-byte AES-128 key, a 16-byte initial counter block, then the PDF encrypted with AES-CTR (the whole 128-bit block is the counter). The key is fresh per response; this only deters casual downloads, the app's viewer decrypts it in memory. The course instructor and enrolled students can open it; users previewing a published course only if the note is marked free.",
                 "produces": [
-                    "application/pdf"
+                    "application/octet-stream"
                 ],
                 "tags": [
                     "notes"
@@ -3514,7 +3514,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "PDF file",
+                        "description": "Key, counter block, then the AES-CTR encrypted PDF",
                         "schema": {
                             "type": "file"
                         }
