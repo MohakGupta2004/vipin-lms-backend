@@ -9,24 +9,29 @@ import (
 func TestMarkLockedNotes(t *testing.T) {
 	notes := func() []models.Note {
 		return []models.Note{
-			{ID: "paid"},
-			{ID: "free note", IsFree: true},
+			{ID: "plus+premium", Tiers: []string{"plus", "premium"}},
+			{ID: "free note", Tiers: []string{"free"}},
+			{ID: "premium only", Tiers: []string{"premium"}},
+			{ID: "ultra only", Tiers: []string{}},
 		}
 	}
 
-	previewed := notes()
-	markLockedNotes(previewed, true)
-	for _, n := range previewed {
-		if want := n.ID == "paid"; n.Locked != want {
-			t.Errorf("preview %q: locked = %v, want %v", n.ID, n.Locked, want)
-		}
+	tests := []struct {
+		tier   models.Tier
+		locked map[string]bool
+	}{
+		{models.TierFree, map[string]bool{"plus+premium": true, "free note": false, "premium only": true, "ultra only": true}},
+		{models.TierPlus, map[string]bool{"plus+premium": false, "free note": false, "premium only": true, "ultra only": true}},
+		{models.TierPremium, map[string]bool{"plus+premium": false, "free note": false, "premium only": false, "ultra only": true}},
+		{models.TierUltra, map[string]bool{}},
 	}
-
-	full := notes()
-	markLockedNotes(full, false)
-	for _, n := range full {
-		if n.Locked {
-			t.Errorf("full access %q: must not be locked", n.ID)
+	for _, tc := range tests {
+		got := notes()
+		markLockedNotes(got, tc.tier)
+		for _, n := range got {
+			if n.Locked != tc.locked[n.ID] {
+				t.Errorf("%s %q: locked = %v, want %v", tc.tier, n.ID, n.Locked, tc.locked[n.ID])
+			}
 		}
 	}
 }

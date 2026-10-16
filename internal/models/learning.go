@@ -90,18 +90,18 @@ func NewLearningRepository(db *sql.DB) *LearningRepository {
 	return &LearningRepository{db: db}
 }
 
-// myCourses is a CTE named mc with the IDs of the courses $1 learns ($2 = false) or owns ($2 = true).
+// myCourses is a CTE named mc with the IDs of the courses $1 learns ($2 = false) or owns ($2 = true),
+// and the user's tier in each: the owner's is ultra, a learner's is the tier on their enrollment.
 // Owners also see drafts and unpublished lessons, like everywhere else.
 const myCourses = `WITH mc AS (
-		SELECT c.id FROM courses c
+		SELECT c.id, CASE WHEN $2 THEN 'ultra' ELSE e.tier END AS tier
+		FROM courses c
+		LEFT JOIN enrollments e ON NOT $2 AND e.course_id = c.id AND e.user_id = $1
+			AND e.status IN ('active', 'completed')
+			AND (e.expires_at IS NULL OR e.expires_at > now())
 		WHERE c.deleted_at IS NULL AND (
 			($2 AND c.instructor_id = $1)
-			OR (NOT $2 AND c.status = 'published' AND EXISTS (
-				SELECT 1 FROM enrollments e
-				WHERE e.course_id = c.id AND e.user_id = $1
-				  AND e.status IN ('active', 'completed')
-				  AND (e.expires_at IS NULL OR e.expires_at > now())
-			))
+			OR (NOT $2 AND c.status = 'published' AND e.id IS NOT NULL)
 		)
 	)`
 
@@ -118,7 +118,8 @@ func (w withExtra) Scan(dest ...any) error { return w.row.Scan(append(dest, w.ex
 func (r *LearningRepository) ListVideos(ctx context.Context, userID string, owner bool, courseID string) ([]MyVideo, error) {
 	query := myCourses + `
 		SELECT ` + videoColumns + `, c.title, l.title,
-			vp.position_sec, vp.duration_sec, vp.completed_at, vp.updated_at
+			vp.position_sec, vp.duration_sec, vp.completed_at, vp.updated_at,
+			NOT ` + TierSQL("v.tiers", "mc.tier") + `
 		FROM videos v
 		JOIN mc ON mc.id = v.course_id
 		JOIN courses c ON c.id = v.course_id
@@ -138,7 +139,7 @@ func (r *LearningRepository) ListVideos(ctx context.Context, userID string, owne
 		var v MyVideo
 		var position, duration sql.NullInt32
 		var completedAt, updatedAt sql.NullTime
-		extra := withExtra{rows, []any{&v.CourseTitle, &v.LessonTitle, &position, &duration, &completedAt, &updatedAt}}
+		extra := withExtra{rows, []any{&v.CourseTitle, &v.LessonTitle, &position, &duration, &completedAt, &updatedAt, &v.Locked}}
 		if err := scanVideo(extra, &v.Video); err != nil {
 			return nil, err
 		}
@@ -152,7 +153,8 @@ func (r *LearningRepository) ListVideos(ctx context.Context, userID string, owne
 func (r *LearningRepository) ContinueWatching(ctx context.Context, userID string, owner bool, limit int) ([]MyVideo, error) {
 	query := myCourses + `
 		SELECT ` + videoColumns + `, c.title, l.title,
-			vp.position_sec, vp.duration_sec, vp.completed_at, vp.updated_at
+			vp.position_sec, vp.duration_sec, vp.completed_at, vp.updated_at,
+			NOT ` + TierSQL("v.tiers", "mc.tier") + `
 		FROM video_progress vp
 		JOIN videos v ON v.id = vp.video_id
 		JOIN mc ON mc.id = v.course_id
@@ -173,7 +175,7 @@ func (r *LearningRepository) ContinueWatching(ctx context.Context, userID string
 		var v MyVideo
 		var position, duration sql.NullInt32
 		var completedAt, updatedAt sql.NullTime
-		extra := withExtra{rows, []any{&v.CourseTitle, &v.LessonTitle, &position, &duration, &completedAt, &updatedAt}}
+		extra := withExtra{rows, []any{&v.CourseTitle, &v.LessonTitle, &position, &duration, &completedAt, &updatedAt, &v.Locked}}
 		if err := scanVideo(extra, &v.Video); err != nil {
 			return nil, err
 		}
@@ -197,7 +199,8 @@ func (r *LearningRepository) ListQuizzes(ctx context.Context, userID string, own
 		GROUP BY a.quiz_id
 	)
 		SELECT ` + quizColumns + `, c.title, l.title,
-			COALESCE(t.attempts, 0), t.best_pct, t.passed, t.last_at
+			COALESCE(t.attempts, 0), t.best_pct, t.passed, t.last_at,
+			NOT ` + TierSQL("q.tiers", "mc.tier") + `
 		FROM quizzes q
 		JOIN mc ON mc.id = q.course_id
 		JOIN courses c ON c.id = q.course_id
@@ -220,7 +223,7 @@ func (r *LearningRepository) ListQuizzes(ctx context.Context, userID string, own
 		var best sql.NullInt32
 		var passed sql.NullBool
 		var lastAt sql.NullTime
-		extra := withExtra{rows, []any{&q.CourseTitle, &q.LessonTitle, &q.AttemptCount, &best, &passed, &lastAt}}
+		extra := withExtra{rows, []any{&q.CourseTitle, &q.LessonTitle, &q.AttemptCount, &best, &passed, &lastAt, &q.Locked}}
 		if err := scanQuiz(extra, &q.Quiz); err != nil {
 			return nil, err
 		}

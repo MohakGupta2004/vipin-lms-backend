@@ -140,7 +140,7 @@ func (s *CourseService) GetCourse(ctx context.Context, user *models.User, course
 	}
 
 	if user.CanTeach() && course.InstructorID == user.ID {
-		course.Access = "owner"
+		course.Access, course.Tier = "owner", models.TierUltra
 		return course, nil
 	}
 	if course.Status != "published" {
@@ -149,14 +149,17 @@ func (s *CourseService) GetCourse(ctx context.Context, user *models.User, course
 		}
 		return nil, ErrCourseNotFound
 	}
-	enrolled, err := s.courseRepo.HasValidEnrollment(ctx, course.ID, user.ID)
+	tier, err := s.courseRepo.EnrollmentTier(ctx, course.ID, user.ID)
 	if err != nil {
 		return nil, err
 	}
-	if enrolled || course.IsFree {
-		course.Access = "full"
-	} else {
-		course.Access = "preview"
+	switch {
+	case tier != "":
+		course.Access, course.Tier = "full", tier
+	case course.IsFree:
+		course.Access, course.Tier = "full", models.TierUltra
+	default:
+		course.Access, course.Tier = "preview", models.TierFree
 	}
 	return course, nil
 }

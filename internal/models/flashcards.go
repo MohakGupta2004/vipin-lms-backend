@@ -16,22 +16,27 @@ type FlashcardDeck struct {
 	Status        string  `json:"status"` // draft or published
 	CardCount     int     `json:"cardCount"`
 	FreeCardCount int     `json:"freeCardCount"`
-	MyReviewed    int     `json:"myReviewed"`
-	MyMastered    int     `json:"myMastered"` // cards rated 4 or 5
+	// AccessibleCardCount is how many cards the asking user's tier can study; Locked is set when there are
+	// cards but none of them is open to that user.
+	AccessibleCardCount int  `json:"accessibleCardCount"`
+	Locked              bool `json:"locked,omitempty"`
+	MyReviewed          int  `json:"myReviewed"`
+	MyMastered          int  `json:"myMastered"` // cards rated 4 or 5
 
 	LessonPublished bool `json:"-"` // students may only see decks of published lessons
 }
 
 // Flashcard is one front/back card of a deck. Front and Back are blank when Locked.
 type Flashcard struct {
-	ID       string `json:"id"`
-	DeckID   string `json:"deckId"`
-	CourseID string `json:"courseId"`
-	Front    string `json:"front"`
-	Back     string `json:"back"`
-	IsFree   bool   `json:"isFree"`
-	Position int    `json:"position"`
-	MyRating *int   `json:"myRating"` // nil = never rated
+	ID       string   `json:"id"`
+	DeckID   string   `json:"deckId"`
+	CourseID string   `json:"courseId"`
+	Front    string   `json:"front"`
+	Back     string   `json:"back"`
+	Tiers    []string `json:"tiers"`  // tiers that can study the card; ultra is implied
+	IsFree   bool     `json:"isFree"` // read-only: free is in Tiers
+	Position int      `json:"position"`
+	MyRating *int     `json:"myRating"` // nil = never rated
 	// Locked is set for users previewing a course: they see the card exists but cannot study it.
 	Locked bool `json:"locked,omitempty"`
 }
@@ -48,6 +53,9 @@ func NewFlashcardRepository(db *sql.DB) *FlashcardRepository {
 const deckColumns = `d.id, d.course_id, d.lesson_id, COALESCE(l.title, ''), c.title, d.status,
 		(SELECT COUNT(*) FROM flashcards f WHERE f.deck_id = d.id AND f.deleted_at IS NULL),
 		(SELECT COUNT(*) FROM flashcards f WHERE f.deck_id = d.id AND f.deleted_at IS NULL AND f.is_free),
+		(SELECT COUNT(*) FROM flashcards f, (SELECT ` + userTierSQL + ` AS t) u
+			WHERE f.deck_id = d.id AND f.deleted_at IS NULL
+			  AND (u.t = 'ultra' OR 'free' = ANY(f.tiers) OR u.t = ANY(f.tiers))),
 		(SELECT COUNT(*) FROM flashcards f JOIN flashcard_reviews r ON r.flashcard_id = f.id AND r.user_id = $1
 			WHERE f.deck_id = d.id AND f.deleted_at IS NULL),
 		(SELECT COUNT(*) FROM flashcards f JOIN flashcard_reviews r ON r.flashcard_id = f.id AND r.user_id = $1
@@ -67,18 +75,19 @@ const deckSelect = `SELECT ` + deckColumns + ` ` + deckFrom + ` WHERE ` + deckLi
 func scanDeck(row interface{ Scan(...any) error }, d *FlashcardDeck) error {
 	var lessonID sql.NullString
 	err := row.Scan(&d.ID, &d.CourseID, &lessonID, &d.LessonTitle, &d.CourseTitle, &d.Status,
-		&d.CardCount, &d.FreeCardCount, &d.MyReviewed, &d.MyMastered, &d.LessonPublished)
+		&d.CardCount, &d.FreeCardCount, &d.AccessibleCardCount, &d.MyReviewed, &d.MyMastered, &d.LessonPublished)
 	if err != nil {
 		return err
 	}
 	if lessonID.Valid {
 		d.LessonID = &lessonID.String
 	}
+	d.Locked = d.CardCount > 0 && d.AccessibleCardCount == 0
 	return nil
 }
 
 // cardColumns are the columns scanCard reads, from flashcards aliased f with the user's review as r.
-const cardColumns = `f.id, f.deck_id, f.course_id, f.front, f.back, f.is_free, f.position, r.rating`
+const cardColumns = `f.id, f.deck_id, f.course_id, f.front, f.back, f.tiers, f.is_free, f.position, r.rating`
 
 // cardFrom joins a card to the review of user $1.
 const cardFrom = `FROM flashcards f
@@ -86,7 +95,7 @@ const cardFrom = `FROM flashcards f
 
 func scanCard(row interface{ Scan(...any) error }, f *Flashcard) error {
 	var rating sql.NullInt32
-	if err := row.Scan(&f.ID, &f.DeckID, &f.CourseID, &f.Front, &f.Back, &f.IsFree, &f.Position, &rating); err != nil {
+	if err := row.Scan(&f.ID, &f.DeckID, &f.CourseID, &f.Front, &f.Back, scanTiers(&f.Tiers), &f.IsFree, &f.Position, &rating); err != nil {
 		return err
 	}
 	if rating.Valid {
@@ -211,9 +220,9 @@ func (r *FlashcardRepository) UpdateDeckStatus(ctx context.Context, deckID, stat
 		status, deckID).Scan(&id)
 }
 
-// SetDeckFree marks every card of the deck free or paid.
-func (r *FlashcardRepository) SetDeckFree(ctx context.Context, deckID string, isFree bool) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE flashcards SET is_free = $2 WHERE deck_id = $1 AND deleted_at IS NULL", deckID, isFree)
+// SetDeckTiers gives every card of the deck the same tiers.
+func (r *FlashcardRepository) SetDeckTiers(ctx context.Context, deckID string, tiers []string) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE flashcards SET tiers = $2::text[] WHERE deck_id = $1 AND deleted_at IS NULL", deckID, tiersParam(tiers))
 	return err
 }
 
@@ -238,11 +247,11 @@ func (r *FlashcardRepository) DeleteDeck(ctx context.Context, deckID string) err
 
 // CreateCard saves a card at the end of its deck and fills in the generated fields.
 func (r *FlashcardRepository) CreateCard(ctx context.Context, f *Flashcard, createdBy string) error {
-	query := `INSERT INTO flashcards (deck_id, course_id, created_by, front, back, is_free, position)
-		VALUES ($1, $2, $3, $4, $5, $6,
+	query := `INSERT INTO flashcards (deck_id, course_id, created_by, front, back, tiers, position)
+		VALUES ($1, $2, $3, $4, $5, $6::text[],
 		        (SELECT COALESCE(MAX(position), 0) + 1 FROM flashcards WHERE deck_id = $1 AND deleted_at IS NULL))
 		RETURNING id, position`
-	return r.db.QueryRowContext(ctx, query, f.DeckID, f.CourseID, createdBy, f.Front, f.Back, f.IsFree).Scan(&f.ID, &f.Position)
+	return r.db.QueryRowContext(ctx, query, f.DeckID, f.CourseID, createdBy, f.Front, f.Back, tiersParam(f.Tiers)).Scan(&f.ID, &f.Position)
 }
 
 // GetCard returns one card with the user's rating, or sql.ErrNoRows.
@@ -264,13 +273,13 @@ func (r *FlashcardRepository) ListDeckCards(ctx context.Context, deckID, userID 
 }
 
 // SessionForDeck returns up to limit distinct cards of a deck in weighted random order (see sessionOrder).
-// freeOnly keeps just the free cards.
-func (r *FlashcardRepository) SessionForDeck(ctx context.Context, deckID, userID string, freeOnly bool, limit int) ([]Flashcard, error) {
+// Only cards the tier can study are kept.
+func (r *FlashcardRepository) SessionForDeck(ctx context.Context, deckID, userID string, tier Tier, limit int) ([]Flashcard, error) {
 	query := `SELECT ` + cardColumns + ` ` + cardFrom + `
-		WHERE f.deleted_at IS NULL AND f.deck_id = $2 AND (NOT $3 OR f.is_free)
+		WHERE f.deleted_at IS NULL AND f.deck_id = $2 AND ` + TierSQL("f.tiers", "$3::text") + `
 		ORDER BY ` + sessionOrder + `
 		LIMIT $4`
-	return r.queryCards(ctx, query, userID, deckID, freeOnly, limit)
+	return r.queryCards(ctx, query, userID, deckID, string(tier), limit)
 }
 
 // SessionMix returns up to limit distinct cards from the published decks of the courses the user is
@@ -284,6 +293,7 @@ func (r *FlashcardRepository) SessionMix(ctx context.Context, userID, courseID s
 		WHERE f.deleted_at IS NULL
 		  AND (d.lesson_id IS NULL OR l.is_published)
 		  AND ($3::uuid IS NULL OR f.course_id = $3::uuid)
+		  AND ` + TierSQL("f.tiers", "mc.tier") + `
 		ORDER BY ` + sessionOrder + `
 		LIMIT $4`
 	return r.queryCards(ctx, query, userID, false, nullUUID(courseID), limit)
@@ -307,11 +317,11 @@ func (r *FlashcardRepository) queryCards(ctx context.Context, query string, args
 	return cards, rows.Err()
 }
 
-// UpdateCard saves a card's front, back and free flag. It returns sql.ErrNoRows if the card does not exist.
+// UpdateCard saves a card's front, back and tiers. It returns sql.ErrNoRows if the card does not exist.
 func (r *FlashcardRepository) UpdateCard(ctx context.Context, f *Flashcard) error {
 	var id string
-	return r.db.QueryRowContext(ctx, `UPDATE flashcards SET front = $1, back = $2, is_free = $3
-		WHERE id = $4 AND deleted_at IS NULL RETURNING id`, f.Front, f.Back, f.IsFree, f.ID).Scan(&id)
+	return r.db.QueryRowContext(ctx, `UPDATE flashcards SET front = $1, back = $2, tiers = $3::text[]
+		WHERE id = $4 AND deleted_at IS NULL RETURNING id`, f.Front, f.Back, tiersParam(f.Tiers), f.ID).Scan(&id)
 }
 
 // DeleteCard soft-deletes a card. It returns sql.ErrNoRows if the card does not exist.

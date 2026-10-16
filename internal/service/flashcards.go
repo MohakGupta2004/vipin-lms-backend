@@ -36,14 +36,16 @@ type CreateDeckInput struct {
 type CreateCardInput struct {
 	Front  string
 	Back   string
-	IsFree bool
+	Tiers  []string // nil = plus and premium; ultra is always included
+	IsFree bool     // deprecated: true is the same as tiers [free]
 }
 
 // UpdateCardInput holds the card fields to change. Nil fields are left as they are.
 type UpdateCardInput struct {
 	Front  *string
 	Back   *string
-	IsFree *bool
+	Tiers  []string // nil = unchanged
+	IsFree *bool    // deprecated: true adds the free tier, false removes it
 }
 
 // MyFlashcards is what the dashboard and the hub show a student: the deck of the lesson they studied
@@ -105,7 +107,7 @@ func sessionLimit(limit int) (int, error) {
 
 // ListCourseDecks returns a course's decks with the user's progress. The owner sees drafts too.
 func (s *FlashcardService) ListCourseDecks(ctx context.Context, user *models.User, courseID string) ([]models.FlashcardDeck, error) {
-	isTeacher, _, err := authorizePreview(ctx, s.lessonRepo, user, courseID)
+	isTeacher, _, err := authorizeTier(ctx, s.lessonRepo, user, courseID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,29 +157,29 @@ func (s *FlashcardService) CreateDeck(ctx context.Context, user *models.User, co
 }
 
 // authorizeDeck loads a deck the user may see: the course owner sees every deck, anyone else only a
-// published deck of a published lesson. preview is true for a user who may only see free cards.
-func (s *FlashcardService) authorizeDeck(ctx context.Context, user *models.User, deckID string) (deck *models.FlashcardDeck, isTeacher, preview bool, err error) {
+// published deck of a published lesson. tier decides which of its cards the user may study.
+func (s *FlashcardService) authorizeDeck(ctx context.Context, user *models.User, deckID string) (deck *models.FlashcardDeck, isTeacher bool, tier models.Tier, err error) {
 	if !uuidPattern.MatchString(deckID) {
-		return nil, false, false, ErrDeckNotFound
+		return nil, false, "", ErrDeckNotFound
 	}
 	deck, err = s.repo.GetDeck(ctx, deckID, user.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, false, ErrDeckNotFound
+		return nil, false, "", ErrDeckNotFound
 	}
 	if err != nil {
-		return nil, false, false, err
+		return nil, false, "", err
 	}
-	isTeacher, preview, err = authorizePreview(ctx, s.lessonRepo, user, deck.CourseID)
+	isTeacher, tier, err = authorizeTier(ctx, s.lessonRepo, user, deck.CourseID)
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) {
-		return nil, false, false, ErrDeckNotFound
+		return nil, false, "", ErrDeckNotFound
 	}
 	if err != nil {
-		return nil, false, false, err
+		return nil, false, "", err
 	}
 	if !isTeacher && (deck.Status != "published" || !deck.LessonPublished) {
-		return nil, false, false, ErrDeckNotFound
+		return nil, false, "", ErrDeckNotFound
 	}
-	return deck, isTeacher, preview, nil
+	return deck, isTeacher, tier, nil
 }
 
 // requireDeckOwner loads a deck for its course owner, who is the only one allowed to change it.
@@ -207,16 +209,29 @@ func (s *FlashcardService) UpdateDeckStatus(ctx context.Context, user *models.Us
 	return s.repo.GetDeck(ctx, deck.ID, user.ID)
 }
 
-// SetDeckFree lets the course owner mark every card of a deck free or paid in one go.
-func (s *FlashcardService) SetDeckFree(ctx context.Context, user *models.User, deckID string, isFree bool) (*models.FlashcardDeck, error) {
+// SetDeckTiers lets the course owner give every card of a deck the same tiers in one go.
+func (s *FlashcardService) SetDeckTiers(ctx context.Context, user *models.User, deckID string, tiers []string) (*models.FlashcardDeck, error) {
+	tiers, err := normalizeTiers(tiers, defaultContentTiers)
+	if err != nil {
+		return nil, err
+	}
 	deck, err := s.requireDeckOwner(ctx, user, deckID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.SetDeckFree(ctx, deck.ID, isFree); err != nil {
+	if err := s.repo.SetDeckTiers(ctx, deck.ID, tiers); err != nil {
 		return nil, err
 	}
 	return s.repo.GetDeck(ctx, deck.ID, user.ID)
+}
+
+// SetDeckFree is the deprecated form of SetDeckTiers: free cards are open to everyone, paid ones to
+// the default paid tiers.
+func (s *FlashcardService) SetDeckFree(ctx context.Context, user *models.User, deckID string, isFree bool) (*models.FlashcardDeck, error) {
+	if isFree {
+		return s.SetDeckTiers(ctx, user, deckID, []string{string(models.TierFree)})
+	}
+	return s.SetDeckTiers(ctx, user, deckID, nil)
 }
 
 // DeleteDeck lets the course owner delete a deck with all its cards.
@@ -235,10 +250,10 @@ func mapDeckErr(err error) error {
 	return err
 }
 
-// ListDeckCards returns a deck's cards in order with the user's ratings. A user previewing the course
-// gets the paid cards locked, with front and back blanked.
+// ListDeckCards returns a deck's cards in order with the user's ratings. Cards the user's tier cannot
+// study come back locked, with front and back blanked.
 func (s *FlashcardService) ListDeckCards(ctx context.Context, user *models.User, deckID string) ([]models.Flashcard, error) {
-	deck, _, preview, err := s.authorizeDeck(ctx, user, deckID)
+	deck, _, tier, err := s.authorizeDeck(ctx, user, deckID)
 	if err != nil {
 		return nil, err
 	}
@@ -246,18 +261,15 @@ func (s *FlashcardService) ListDeckCards(ctx context.Context, user *models.User,
 	if err != nil {
 		return nil, err
 	}
-	markLockedCards(cards, preview)
+	markLockedCards(cards, tier)
 	return cards, nil
 }
 
-// markLockedCards locks the cards a user previewing the course cannot study: every card the instructor
-// has not marked free. Their text is blanked so it never leaves the server.
-func markLockedCards(cards []models.Flashcard, preview bool) {
-	if !preview {
-		return
-	}
+// markLockedCards locks the cards a user on this tier cannot study: every card not tagged for the tier
+// or free. Their text is blanked so it never leaves the server.
+func markLockedCards(cards []models.Flashcard, tier models.Tier) {
 	for i := range cards {
-		if !cards[i].IsFree {
+		if !models.CanAccess(tier, cards[i].Tiers) {
 			cards[i].Locked = true
 			cards[i].Front = ""
 			cards[i].Back = ""
@@ -276,7 +288,15 @@ func (s *FlashcardService) CreateCard(ctx context.Context, user *models.User, de
 	if err != nil {
 		return nil, err
 	}
-	card := &models.Flashcard{DeckID: deck.ID, CourseID: deck.CourseID, Front: in.Front, Back: in.Back, IsFree: in.IsFree}
+	tiers := in.Tiers
+	if tiers == nil && in.IsFree {
+		tiers = []string{string(models.TierFree)}
+	}
+	tiers, err = normalizeTiers(tiers, defaultContentTiers)
+	if err != nil {
+		return nil, err
+	}
+	card := &models.Flashcard{DeckID: deck.ID, CourseID: deck.CourseID, Front: in.Front, Back: in.Back, Tiers: tiers}
 	if err := s.repo.CreateCard(ctx, card, user.ID); err != nil {
 		return nil, err
 	}
@@ -284,25 +304,25 @@ func (s *FlashcardService) CreateCard(ctx context.Context, user *models.User, de
 }
 
 // loadCard loads a card and its deck the user may see.
-func (s *FlashcardService) loadCard(ctx context.Context, user *models.User, cardID string) (*models.Flashcard, *models.FlashcardDeck, bool, bool, error) {
+func (s *FlashcardService) loadCard(ctx context.Context, user *models.User, cardID string) (*models.Flashcard, *models.FlashcardDeck, bool, models.Tier, error) {
 	if !uuidPattern.MatchString(cardID) {
-		return nil, nil, false, false, ErrFlashcardNotFound
+		return nil, nil, false, "", ErrFlashcardNotFound
 	}
 	card, err := s.repo.GetCard(ctx, cardID, user.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, false, false, ErrFlashcardNotFound
+		return nil, nil, false, "", ErrFlashcardNotFound
 	}
 	if err != nil {
-		return nil, nil, false, false, err
+		return nil, nil, false, "", err
 	}
-	deck, isTeacher, preview, err := s.authorizeDeck(ctx, user, card.DeckID)
+	deck, isTeacher, tier, err := s.authorizeDeck(ctx, user, card.DeckID)
 	if errors.Is(err, ErrDeckNotFound) {
-		return nil, nil, false, false, ErrFlashcardNotFound
+		return nil, nil, false, "", ErrFlashcardNotFound
 	}
 	if err != nil {
-		return nil, nil, false, false, err
+		return nil, nil, false, "", err
 	}
-	return card, deck, isTeacher, preview, nil
+	return card, deck, isTeacher, tier, nil
 }
 
 // UpdateCard lets the course owner edit a card.
@@ -320,8 +340,13 @@ func (s *FlashcardService) UpdateCard(ctx context.Context, user *models.User, ca
 	if in.Back != nil {
 		card.Back = strings.TrimSpace(*in.Back)
 	}
-	if in.IsFree != nil {
-		card.IsFree = *in.IsFree
+	switch {
+	case in.Tiers != nil:
+		if card.Tiers, err = normalizeTiers(in.Tiers, nil); err != nil {
+			return nil, err
+		}
+	case in.IsFree != nil:
+		card.Tiers = legacyFreeTiers(card.Tiers, *in.IsFree, defaultContentTiers)
 	}
 	if err := validateCardText(card.Front, card.Back); err != nil {
 		return nil, err
@@ -352,17 +377,17 @@ func (s *FlashcardService) DeleteCard(ctx context.Context, user *models.User, ca
 }
 
 // DeckSession returns a random study order of a deck's cards, no card twice, the low-rated ones likelier.
-// A user previewing the course only gets the free cards.
+// Only the cards the user's tier can study are included.
 func (s *FlashcardService) DeckSession(ctx context.Context, user *models.User, deckID string, limit int) ([]models.Flashcard, error) {
 	limit, err := sessionLimit(limit)
 	if err != nil {
 		return nil, err
 	}
-	deck, _, preview, err := s.authorizeDeck(ctx, user, deckID)
+	deck, _, tier, err := s.authorizeDeck(ctx, user, deckID)
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.SessionForDeck(ctx, deck.ID, user.ID, preview, limit)
+	return s.repo.SessionForDeck(ctx, deck.ID, user.ID, tier, limit)
 }
 
 // MyFlashcards returns a student's decks and the deck of the lesson they studied last.
@@ -417,11 +442,11 @@ func (s *FlashcardService) ReviewCard(ctx context.Context, user *models.User, ca
 	if err := validateRating(rating); err != nil {
 		return err
 	}
-	card, _, _, preview, err := s.loadCard(ctx, user, cardID)
+	card, _, _, tier, err := s.loadCard(ctx, user, cardID)
 	if err != nil {
 		return err
 	}
-	if preview && !card.IsFree {
+	if !models.CanAccess(tier, card.Tiers) {
 		return ErrFlashcardNotFound
 	}
 	return s.repo.UpsertReview(ctx, user.ID, card.ID, rating)

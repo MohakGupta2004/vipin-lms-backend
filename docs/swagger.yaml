@@ -37,6 +37,9 @@ definitions:
       months:
         description: how long the enrollment lasts, like 3
         type: integer
+      tier:
+        description: plus, premium or ultra
+        type: string
       userId:
         type: string
     type: object
@@ -47,7 +50,14 @@ definitions:
       front:
         type: string
       isFree:
+        description: 'deprecated: use tiers'
         type: boolean
+      tiers:
+        description: free, plus, premium; defaults to plus and premium; ultra is always
+          included
+        items:
+          type: string
+        type: array
     type: object
   handlers.CreateLessonRequest:
     properties:
@@ -97,6 +107,7 @@ definitions:
       description:
         type: string
       isFree:
+        description: 'deprecated: use tiers'
         type: boolean
       passPercent:
         description: mock_test only; defaults to 70
@@ -108,6 +119,12 @@ definitions:
       status:
         description: draft or published, defaults to published
         type: string
+      tiers:
+        description: free, plus, premium; defaults to plus and premium; ultra is always
+          included
+        items:
+          type: string
+        type: array
       timeLimitSec:
         description: mock_test only; omit for an untimed quiz
         type: integer
@@ -160,6 +177,13 @@ definitions:
       isFree:
         type: boolean
     type: object
+  handlers.SetDeckTiersRequest:
+    properties:
+      tiers:
+        items:
+          type: string
+        type: array
+    type: object
   handlers.SubmitAnswerRequest:
     properties:
       optionId:
@@ -201,10 +225,13 @@ definitions:
         description: draft or published
         type: string
     type: object
-  handlers.UpdateEnrollmentStatusRequest:
+  handlers.UpdateEnrollmentRequest:
     properties:
       status:
         description: active, completed, expired or cancelled
+        type: string
+      tier:
+        description: plus, premium or ultra
         type: string
     type: object
   handlers.UpdateFlashcardRequest:
@@ -214,7 +241,12 @@ definitions:
       front:
         type: string
       isFree:
+        description: 'deprecated: use tiers'
         type: boolean
+      tiers:
+        items:
+          type: string
+        type: array
     type: object
   handlers.UpdateLessonRequest:
     properties:
@@ -232,8 +264,13 @@ definitions:
       description:
         type: string
       isFree:
-        description: open to users previewing the course
+        description: 'deprecated: use tiers'
         type: boolean
+      tiers:
+        description: free, plus, premium; ultra is always included
+        items:
+          type: string
+        type: array
       title:
         type: string
     type: object
@@ -242,6 +279,7 @@ definitions:
       description:
         type: string
       isFree:
+        description: 'deprecated: use tiers'
         type: boolean
       passPercent:
         type: integer
@@ -251,6 +289,10 @@ definitions:
         type: array
       status:
         type: string
+      tiers:
+        items:
+          type: string
+        type: array
       timeLimitSec:
         type: integer
       title:
@@ -340,7 +382,16 @@ definitions:
       fileName:
         type: string
       isFree:
+        description: 'deprecated: true is the same as tiers [free]'
         type: boolean
+      kind:
+        description: offline (default) or meet
+        type: string
+      tiers:
+        description: free, plus, premium; defaults by kind; ultra is always included
+        items:
+          type: string
+        type: array
     type: object
   handlers.saveVideoProgressBody:
     properties:
@@ -360,6 +411,17 @@ definitions:
     properties:
       description:
         type: string
+      isFree:
+        description: 'deprecated: use tiers'
+        type: boolean
+      kind:
+        description: offline or meet
+        type: string
+      tiers:
+        description: free, plus, premium; ultra is always included
+        items:
+          type: string
+        type: array
       title:
         type: string
     type: object
@@ -418,6 +480,12 @@ definitions:
         type: string
       status:
         type: string
+      tier:
+        allOf:
+        - $ref: '#/definitions/models.Tier'
+        description: |-
+          Tier is also only filled in by GET /courses/{id}: free, plus, premium or ultra. The owner and
+          anyone in a free course are ultra; an enrolled student has the tier of their enrollment.
       title:
         type: string
       videoCount:
@@ -448,6 +516,12 @@ definitions:
         type: string
       status:
         type: string
+      tier:
+        allOf:
+        - $ref: '#/definitions/models.Tier'
+        description: |-
+          Tier is also only filled in by GET /courses/{id}: free, plus, premium or ultra. The owner and
+          anyone in a free course are ultra; an enrolled student has the tier of their enrollment.
       title:
         type: string
     type: object
@@ -506,6 +580,11 @@ definitions:
         type: string
       status:
         type: string
+      tier:
+        allOf:
+        - $ref: '#/definitions/models.Tier'
+        description: 'plus, premium or ultra: how much of the course the student can
+          open'
       userId:
         type: string
     type: object
@@ -533,6 +612,7 @@ definitions:
       id:
         type: string
       isFree:
+        description: 'read-only: free is in Tiers'
         type: boolean
       locked:
         description: 'Locked is set for users previewing a course: they see the card
@@ -543,9 +623,19 @@ definitions:
         type: integer
       position:
         type: integer
+      tiers:
+        description: tiers that can study the card; ultra is implied
+        items:
+          type: string
+        type: array
     type: object
   models.FlashcardDeck:
     properties:
+      accessibleCardCount:
+        description: |-
+          AccessibleCardCount is how many cards the asking user's tier can study; Locked is set when there are
+          cards but none of them is open to that user.
+        type: integer
       cardCount:
         type: integer
       courseId:
@@ -561,6 +651,8 @@ definitions:
         type: string
       lessonTitle:
         type: string
+      locked:
+        type: boolean
       myMastered:
         description: cards rated 4 or 5
         type: integer
@@ -638,6 +730,7 @@ definitions:
       id:
         type: string
       isFree:
+        description: 'read-only: free is in Tiers'
         type: boolean
       lastAttemptAt:
         type: string
@@ -664,6 +757,11 @@ definitions:
         type: array
       status:
         type: string
+      tiers:
+        description: tiers that can open the quiz; ultra is implied
+        items:
+          type: string
+        type: array
       timeLimitSec:
         description: nil = untimed
         type: integer
@@ -691,6 +789,8 @@ definitions:
         type: string
       isFree:
         type: boolean
+      kind:
+        type: string
       lessonId:
         type: string
       lessonTitle:
@@ -708,6 +808,12 @@ definitions:
         type: integer
       status:
         type: string
+      tiers:
+        description: 'Tiers lists the tiers that can stream the video; ultra is implied.
+          IsFree is read-only: free is in Tiers.'
+        items:
+          type: string
+        type: array
       title:
         type: string
       updatedAt:
@@ -726,8 +832,6 @@ definitions:
       id:
         type: string
       isFree:
-        description: open to users previewing the course; a free lesson does not make
-          its notes free
         type: boolean
       lessonId:
         type: string
@@ -737,6 +841,13 @@ definitions:
         type: boolean
       sizeBytes:
         type: integer
+      tiers:
+        description: |-
+          Tiers lists the tiers that can open the note; ultra is implied. IsFree is read-only: free is in Tiers.
+          A free lesson does not make its notes free.
+        items:
+          type: string
+        type: array
       title:
         type: string
       uploadedBy:
@@ -804,6 +915,7 @@ definitions:
       id:
         type: string
       isFree:
+        description: 'read-only: free is in Tiers'
         type: boolean
       lessonId:
         type: string
@@ -822,6 +934,11 @@ definitions:
         type: array
       status:
         type: string
+      tiers:
+        description: tiers that can open the quiz; ultra is implied
+        items:
+          type: string
+        type: array
       timeLimitSec:
         description: nil = untimed
         type: integer
@@ -867,6 +984,18 @@ definitions:
     - RoleStudent
     - RoleInstructor
     - RoleAdmin
+  models.Tier:
+    enum:
+    - free
+    - plus
+    - premium
+    - ultra
+    type: string
+    x-enum-varnames:
+    - TierFree
+    - TierPlus
+    - TierPremium
+    - TierUltra
   models.User:
     properties:
       email:
@@ -919,6 +1048,8 @@ definitions:
         type: string
       isFree:
         type: boolean
+      kind:
+        type: string
       lessonId:
         type: string
       locked:
@@ -934,6 +1065,12 @@ definitions:
         type: integer
       status:
         type: string
+      tiers:
+        description: 'Tiers lists the tiers that can stream the video; ultra is implied.
+          IsFree is read-only: free is in Tiers.'
+        items:
+          type: string
+        type: array
       title:
         type: string
       updatedAt:
@@ -1873,13 +2010,17 @@ paths:
   /courses/{id}/videos:
     get:
       description: Owner sees every video. Students see ready videos of published
-        lessons. Users previewing a published course they are not enrolled in see
-        them too, with locked=true on the ones they cannot stream.
+        lessons. Users not enrolled, or enrolled on a lower tier, see them too, with
+        locked=true on the ones their tier cannot stream.
       parameters:
       - description: Course ID
         in: path
         name: id
         required: true
+        type: string
+      - description: 'Only videos of this kind: offline or meet'
+        in: query
+        name: kind
         type: string
       produces:
       - application/json
@@ -1965,7 +2106,8 @@ paths:
       consumes:
       - application/json
       description: Admin only. Enrolls a student in a published course for a number
-        of months (1 to 60). The expiry date is calculated by the server.
+        of months (1 to 60) on a tier (plus, premium or ultra). The expiry date is
+        calculated by the server.
       parameters:
       - description: Enrollment details
         in: body
@@ -2012,19 +2154,20 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Admin only. For example set an enrollment to cancelled.
+      description: Admin only. For example set an enrollment to cancelled, or move
+        it to another tier. Only the fields that are sent change.
       parameters:
       - description: Enrollment ID
         in: path
         name: id
         required: true
         type: string
-      - description: New status
+      - description: Fields to change
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/handlers.UpdateEnrollmentStatusRequest'
+          $ref: '#/definitions/handlers.UpdateEnrollmentRequest'
       produces:
       - application/json
       responses:
@@ -2038,7 +2181,7 @@ paths:
                   $ref: '#/definitions/models.Enrollment'
               type: object
         "400":
-          description: Malformed payload or invalid status
+          description: Malformed payload, invalid status or tier, or nothing to change
           schema:
             $ref: '#/definitions/utils.JSONResponse'
         "401":
@@ -2057,7 +2200,7 @@ paths:
           description: Internal server error
           schema:
             $ref: '#/definitions/utils.JSONResponse'
-      summary: Change enrollment status
+      summary: Change an enrollment's status or tier
       tags:
       - enrollments
   /exams:
@@ -2182,9 +2325,8 @@ paths:
       - flashcards
   /flashcard-decks/{id}/cards:
     get:
-      description: Cards in order, each with the user's own rating. A user previewing
-        the course (not enrolled in a paid course) gets the paid cards with locked
-        true and front and back blank.
+      description: Cards in order, each with the user's own rating. Cards the user's
+        tier cannot study come back with locked true and front and back blank.
       parameters:
       - description: Deck ID
         in: path
@@ -2276,8 +2418,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Course owner only. Sets isFree on all the deck's cards at once;
-        free cards can be studied by users previewing the course.
+      deprecated: true
+      description: Deprecated, use PUT /flashcard-decks/{id}/tiers. Course owner only.
+        true gives all the deck's cards the free tier, false the default paid tiers.
       parameters:
       - description: Deck ID
         in: path
@@ -2328,8 +2471,7 @@ paths:
   /flashcard-decks/{id}/session:
     get:
       description: Distinct cards of the deck in random order; cards rated low by
-        the user come up more often. Users previewing the course only get the free
-        cards.
+        the user come up more often. Only cards the user's tier can study are included.
       parameters:
       - description: Deck ID
         in: path
@@ -2371,6 +2513,60 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Study session for a deck
+      tags:
+      - flashcards
+  /flashcard-decks/{id}/tiers:
+    put:
+      consumes:
+      - application/json
+      description: Course owner only. Gives all the deck's cards the same tiers at
+        once (free, plus, premium; ultra is always included). Cards tagged free can
+        be studied by users who are not enrolled.
+      parameters:
+      - description: Deck ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Tiers
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SetDeckTiersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deck updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.FlashcardDeck'
+              type: object
+        "400":
+          description: Malformed payload or unknown tier
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not the course owner
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Deck not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Set the tiers of every card of a deck
       tags:
       - flashcards
   /flashcards/{id}:
@@ -2620,7 +2816,8 @@ paths:
       consumes:
       - multipart/form-data
       description: Course owner (instructor or admin) uploads a PDF note to a lesson
-        of their course. Max 25 MB. isFree lets users previewing the course open it
+        of their course. Max 25 MB. tiers lists who can open it (default plus and
+        premium; ultra always can); free lets users who are not enrolled open it too,
         even when its lesson is paid.
       parameters:
       - description: Lesson ID
@@ -2637,7 +2834,15 @@ paths:
         in: formData
         name: description
         type: string
-      - description: 'Free preview: open without enrolling (default false)'
+      - collectionFormat: csv
+        description: 'Tiers that can open the note: free, plus, premium (repeat the
+          field). Default plus and premium; ultra is always included'
+        in: formData
+        items:
+          type: string
+        name: tiers
+        type: array
+      - description: 'Deprecated: true is the same as tiers=free'
         in: formData
         name: isFree
         type: boolean
@@ -2689,9 +2894,9 @@ paths:
     get:
       description: Returns the quizzes of a lesson without their questions. The course
         instructor and enrolled students can see them; students see published quizzes
-        only. Users previewing a published course see them too, with locked set on
-        those not marked free (a free lesson does not unlock its quizzes). Filter
-        with ?type=mock_test or ?type=practice.
+        only. Users not enrolled, or enrolled on a lower tier, see them too, with
+        locked set on those their tier cannot open (a free lesson does not unlock
+        its quizzes). Filter with ?type=mock_test or ?type=practice.
       parameters:
       - description: Lesson ID
         in: path
@@ -2798,13 +3003,17 @@ paths:
   /lessons/{id}/videos:
     get:
       description: Owner sees every video. Students see ready videos of published
-        lessons. Users previewing a published course they are not enrolled in see
-        them too, with locked=true on the ones they cannot stream.
+        lessons. Users not enrolled, or enrolled on a lower tier, see them too, with
+        locked=true on the ones their tier cannot stream.
       parameters:
       - description: Lesson ID
         in: path
         name: id
         required: true
+        type: string
+      - description: 'Only videos of this kind: offline or meet'
+        in: query
+        name: kind
         type: string
       produces:
       - application/json
@@ -2845,8 +3054,8 @@ paths:
         name: id
         required: true
         type: string
-      - description: File name, optional description, and whether the video is free
-          to watch
+      - description: File name, optional description, kind (offline or meet) and the
+          tiers that can watch it
         in: body
         name: body
         required: true
@@ -3185,9 +3394,9 @@ paths:
       consumes:
       - application/json
       description: Course owner (instructor or admin) edits a note's title, description,
-        or whether it is free. Free notes open for users previewing the course without
-        enrolling. Only the fields that are sent change; the PDF itself cannot be
-        replaced.
+        or the tiers that can open it (free, plus, premium; ultra always can). Free
+        notes open for users who are not enrolled. Only the fields that are sent change;
+        the PDF itself cannot be replaced.
       parameters:
       - description: Note ID
         in: path
@@ -3901,9 +4110,10 @@ paths:
     patch:
       consumes:
       - application/json
-      description: The uploader (who must still own the course) changes the title
-        or the description students see under the player. Omitted fields are left
-        as they are; an empty description removes it.
+      description: 'The uploader (who must still own the course) changes the title,
+        the description students see under the player, the section (kind: offline
+        or meet) or the tiers that can watch it. Omitted fields are left as they are;
+        an empty description removes it.'
       parameters:
       - description: Video ID
         in: path
@@ -3948,7 +4158,7 @@ paths:
           description: Internal server error
           schema:
             $ref: '#/definitions/utils.JSONResponse'
-      summary: Edit a video's title and description
+      summary: Edit a video's details, section and access
       tags:
       - videos
   /videos/{id}/completion:

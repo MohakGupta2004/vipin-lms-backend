@@ -440,6 +440,36 @@ Each video has an optional `description` (what the lecture covers), shown under 
 
 ---
 
+## 17. Tiers and video kinds (new)
+
+Every note, quiz, flashcard and video lists the tiers that can open it (`tiers`, from `free`, `plus`, `premium`; `ultra` is always implied and never stored). A student's tier is on the enrollment. Owner and free-course users are ultra; an unenrolled user in a published course is free. Needs the owner (`admin.jar`), three students enrolled on `plus`, `premium` and `ultra` (`plus.jar`, `premium.jar`, `ultra.jar`), and one student with no enrollment (`free.jar`). Items: note `$N`, quiz `$Q`, flashcard `$F`, offline video `$V1`, meet video `$V2` (all in lesson `$L1`).
+
+| # | Request | Expect |
+|---|---------|--------|
+| 17.1 | Admin: `POST $B/enrollments {"userId":"$U","courseId":"$C","months":3}` (no tier) | `400` (tier is required) |
+| 17.2 | Admin: same with `"tier":"plus"` / `"premium"` / `"ultra"` for three students | `201`; `tier` is returned |
+| 17.3 | Admin: `PATCH $B/enrollments/$E {"tier":"premium"}`, then `{"status":"cancelled"}` | `200` each; only the sent field changes. `{}` is `400` |
+| 17.4 | Student: `GET $B/courses/$C` | `tier` is `plus`, `premium`, `ultra`; unenrolled gets `free`; owner gets `ultra` |
+| 17.5 | Owner: `POST $B/lessons/$L1/videos {"fileName":"a.mp4","kind":"offline"}` | `201`; `kind: "offline"`, `tiers: ["premium"]` |
+| 17.6 | Owner: same with `"kind":"meet"` | `201`; `kind: "meet"`, `tiers: []` (ultra only) |
+| 17.7 | Owner: upload with `"kind":"live"` or `"tiers":["gold"]` | `400` |
+| 17.8 | Owner: `PATCH $B/videos/$V1 {"kind":"meet","tiers":["premium"]}` | `200`; moved to Meet, now premium + ultra |
+| 17.9 | `GET $B/lessons/$L1/videos?kind=meet` and `GET $B/courses/$C/videos?kind=offline` | Only that kind |
+| 17.10 | Owner: create a note with `tiers=plus` (repeat the form field), a quiz with `"tiers":["premium"]`, a card with `"tiers":["free"]` | `201`; each returns its `tiers`; `isFree` is true only for the card |
+| 17.11 | Owner: create a note/quiz/card without `tiers` | Default `["plus","premium"]` |
+| 17.12 | Old client: create a quiz with `"isFree":true` and no `tiers` | `201`; `tiers: ["free"]` |
+| 17.13 | `free.jar`: list notes, quizzes, videos, cards | Only the free card opens; the rest have `locked: true` (locked cards blank their text) |
+| 17.14 | `plus.jar`: open note `$N` (`GET $B/notes/$N/file`) and card `$F` | Open. Quiz `$Q` (premium only), `$V1`, `$V2` are locked |
+| 17.15 | `premium.jar`: open quiz `$Q` and the offline video | Open. The meet video is locked |
+| 17.16 | `ultra.jar` | Everything opens |
+| 17.17 | `plus.jar`: `GET $B/videos/$V2/stream`, `GET $B/notes/$premiumOnlyNote/file`, `POST $B/quizzes/$Q/attempts` | `404` each (no bypass) |
+| 17.18 | `plus.jar`: `GET $B/me/videos`, `GET $B/me/quizzes`, `GET $B/me/flashcards`, `GET $B/me/flashcards/session` | Locked items carry `locked: true`; the session only has cards plus can study |
+| 17.19 | Owner: `PUT $B/flashcard-decks/$D/tiers {"tiers":["premium"]}` | `200`; every card of the deck is premium + ultra. `{"tiers":["x"]}` is `400` |
+| 17.20 | Owner: `PUT $B/flashcard-decks/$D/free {"isFree":true}` (deprecated) | All cards become `["free"]` |
+| 17.21 | `GET $B/catalog/courses` | Free counts still match items tagged `free` |
+
+---
+
 ## Migrations added
 
 | File | Change | Down |
@@ -452,3 +482,5 @@ Each video has an optional `description` (what the lecture covers), shown under 
 | `30_notes_is_free` | `notes.is_free` for per-note free preview | Drops the column; notes are free again only through their lesson |
 | `33_create_table_flashcards` | `flashcard_decks`, `flashcards`, `flashcard_reviews` | Drops the three tables |
 | `34_videos_description` | Nullable `videos.description` | Drops the column |
+| `35_enrollment_tier_and_video_kind` | `enrollments.tier` (existing rows become `ultra`), `videos.kind` (existing rows `offline`) | Drops both columns |
+| `36_content_tiers` | `tiers TEXT[]` on notes, quizzes, videos, flashcards; `is_free` becomes a generated column (`free` in `tiers`). Old free items become `{free}`, paid notes/quizzes/cards `{plus,premium}`, paid videos `{premium}` | Restores a plain `is_free` from `tiers` and drops `tiers` |

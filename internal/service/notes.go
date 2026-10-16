@@ -45,8 +45,8 @@ func NewNoteService(noteRepo *models.NoteRepository, lessonRepo *models.LessonRe
 }
 
 // UploadNote lets the course owner (instructor or admin) share a PDF on a lesson of their course.
-// isFree opens it to users previewing the course; otherwise only enrolled students can open it.
-func (s *NoteService) UploadNote(ctx context.Context, user *models.User, lessonID, title, description, fileName string, isFree bool, file io.Reader) (*models.Note, error) {
+// tiers lists who can open it (nil = the default, plus and premium; ultra always can).
+func (s *NoteService) UploadNote(ctx context.Context, user *models.User, lessonID, title, description, fileName string, tiers []string, file io.Reader) (*models.Note, error) {
 	if !user.CanTeach() {
 		return nil, ErrForbidden
 	}
@@ -60,6 +60,10 @@ func (s *NoteService) UploadNote(ctx context.Context, user *models.User, lessonI
 	title = strings.TrimSpace(title)
 	description = strings.TrimSpace(description)
 	if err := validateNoteText(title, description); err != nil {
+		return nil, err
+	}
+	tiers, err := normalizeTiers(tiers, defaultContentTiers)
+	if err != nil {
 		return nil, err
 	}
 
@@ -93,7 +97,7 @@ func (s *NoteService) UploadNote(ctx context.Context, user *models.User, lessonI
 		Description:  description,
 		FileName:     pdfFileName(fileName, title),
 		SizeBytes:    uploaded.Size,
-		IsFree:       isFree,
+		Tiers:        tiers,
 		UploadedBy:   user.ID,
 		UploaderName: user.FirstName + " " + user.LastName,
 		ObjectKey:    uploaded.Object,
@@ -107,13 +111,13 @@ func (s *NoteService) UploadNote(ctx context.Context, user *models.User, lessonI
 }
 
 // ListNotes returns a course's PDF notes for its instructor or an enrolled student. Users previewing
-// the course get every note, with locked set on those they cannot open.
+// the course, or enrolled on a lower tier, get every note, with locked set on those they cannot open.
 // lessonID narrows the list to one lesson; empty means the whole course.
 func (s *NoteService) ListNotes(ctx context.Context, user *models.User, courseID, lessonID string, limit, offset int) ([]models.Note, error) {
 	if lessonID != "" && !uuidPattern.MatchString(lessonID) {
 		return nil, fmt.Errorf("%w: lessonId must be a valid id", ErrInvalidInput)
 	}
-	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, courseID)
+	isTeacher, tier, err := authorizeTier(ctx, s.lessonRepo, user, courseID)
 	if err != nil {
 		return nil, err
 	}
@@ -121,24 +125,21 @@ func (s *NoteService) ListNotes(ctx context.Context, user *models.User, courseID
 	if err != nil {
 		return nil, err
 	}
-	markLockedNotes(notes, preview)
+	markLockedNotes(notes, tier)
 	return notes, nil
 }
 
-// markLockedNotes sets locked on the notes a user previewing the course cannot open: every note the
-// instructor has not marked free. The lesson's own free flag does not unlock its notes.
-func markLockedNotes(notes []models.Note, preview bool) {
-	if !preview {
-		return
-	}
+// markLockedNotes sets locked on the notes a user on this tier cannot open: every note not tagged
+// for the tier or free. The lesson's own free flag does not unlock its notes.
+func markLockedNotes(notes []models.Note, tier models.Tier) {
 	for i := range notes {
-		notes[i].Locked = noteLocked(&notes[i])
+		notes[i].Locked = noteLocked(&notes[i], tier)
 	}
 }
 
-// noteLocked reports whether a previewer is shut out of a note.
-func noteLocked(n *models.Note) bool {
-	return !n.IsFree
+// noteLocked reports whether a user on this tier is shut out of a note.
+func noteLocked(n *models.Note, tier models.Tier) bool {
+	return !models.CanAccess(tier, n.Tiers)
 }
 
 // OpenNote checks access and returns the note with its PDF stream. Caller must Close the stream.
@@ -148,7 +149,7 @@ func (s *NoteService) OpenNote(ctx context.Context, user *models.User, noteID st
 		return nil, nil, err
 	}
 
-	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, note.CourseID)
+	isTeacher, tier, err := authorizeTier(ctx, s.lessonRepo, user, note.CourseID)
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) {
 		return nil, nil, ErrNoteNotFound
 	}
@@ -156,8 +157,8 @@ func (s *NoteService) OpenNote(ctx context.Context, user *models.User, noteID st
 		return nil, nil, err
 	}
 	// Students cannot open notes of lessons the instructor has not published,
-	// and previewers only notes marked free.
-	if !isTeacher && (!note.LessonPublished || (preview && noteLocked(note))) {
+	// and nobody opens a note their tier is not tagged for.
+	if !isTeacher && (!note.LessonPublished || noteLocked(note, tier)) {
 		return nil, nil, ErrNoteNotFound
 	}
 
@@ -189,11 +190,12 @@ func validateNoteText(title, description string) error {
 type UpdateNoteInput struct {
 	Title       *string
 	Description *string
-	IsFree      *bool
+	Tiers       []string // nil = unchanged
+	IsFree      *bool    // deprecated: true adds the free tier, false removes it
 }
 
 // UpdateNote lets the course owner (instructor or admin) edit a note of their course: its title,
-// description, and whether it is free to preview. The PDF itself cannot be replaced.
+// description, and which tiers can open it. The PDF itself cannot be replaced.
 func (s *NoteService) UpdateNote(ctx context.Context, user *models.User, noteID string, in UpdateNoteInput) (*models.Note, error) {
 	if !user.CanTeach() {
 		return nil, ErrForbidden
@@ -216,8 +218,13 @@ func (s *NoteService) UpdateNote(ctx context.Context, user *models.User, noteID 
 	if in.Description != nil {
 		note.Description = strings.TrimSpace(*in.Description)
 	}
-	if in.IsFree != nil {
-		note.IsFree = *in.IsFree
+	switch {
+	case in.Tiers != nil:
+		if note.Tiers, err = normalizeTiers(in.Tiers, nil); err != nil {
+			return nil, err
+		}
+	case in.IsFree != nil:
+		note.Tiers = legacyFreeTiers(note.Tiers, *in.IsFree, defaultContentTiers)
 	}
 	if err := validateNoteText(note.Title, note.Description); err != nil {
 		return nil, err

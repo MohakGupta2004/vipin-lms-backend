@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -21,6 +22,9 @@ type Course struct {
 	// Access is only filled in by GET /courses/{id}: "owner", "full" (enrolled, or the course is free)
 	// or "preview" (published course, not enrolled: free content only).
 	Access string `json:"access,omitempty"`
+	// Tier is also only filled in by GET /courses/{id}: free, plus, premium or ultra. The owner and
+	// anyone in a free course are ultra; an enrolled student has the tier of their enrollment.
+	Tier Tier `json:"tier,omitempty"`
 }
 
 // CatalogCourse is a published course as the catalog shows it, with how much of it is free to preview.
@@ -107,10 +111,11 @@ func (r *CourseRepository) ListByInstructor(ctx context.Context, instructorID st
 	return r.queryCourses(ctx, query, instructorID, limit, offset)
 }
 
-// ListEnrolled returns the published courses this user has a valid enrollment in, newest enrollment first.
+// ListEnrolled returns the published courses this user has a valid enrollment in, newest enrollment first,
+// each with the tier of that enrollment.
 func (r *CourseRepository) ListEnrolled(ctx context.Context, userID string, limit, offset int) ([]Course, error) {
 	query := `SELECT c.id, c.exam_id, c.instructor_id, c.title, c.slug,
-			COALESCE(c.short_description, ''), COALESCE(c.description, ''), c.status, c.is_free, c.created_at
+			COALESCE(c.short_description, ''), COALESCE(c.description, ''), c.status, c.is_free, c.created_at, e.tier
 		FROM courses c
 		JOIN enrollments e ON e.course_id = c.id
 		WHERE e.user_id = $1
@@ -120,7 +125,22 @@ func (r *CourseRepository) ListEnrolled(ctx context.Context, userID string, limi
 		  AND c.deleted_at IS NULL
 		ORDER BY e.enrolled_at DESC, c.id DESC
 		LIMIT $2 OFFSET $3`
-	return r.queryCourses(ctx, query, userID, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	courses := []Course{}
+	for rows.Next() {
+		var c Course
+		if err := rows.Scan(&c.ID, &c.ExamID, &c.InstructorID, &c.Title, &c.Slug,
+			&c.ShortDescription, &c.Description, &c.Status, &c.IsFree, &c.CreatedAt, &c.Tier); err != nil {
+			return nil, err
+		}
+		courses = append(courses, c)
+	}
+	return courses, rows.Err()
 }
 
 // ListCatalog returns every published course, newest first, with counts of its free content as seen
@@ -219,17 +239,19 @@ func (r *CourseRepository) GetCourse(ctx context.Context, courseID string) (*Cou
 	return &c, nil
 }
 
-// HasValidEnrollment reports whether the user has an enrollment in the course that is still valid.
-func (r *CourseRepository) HasValidEnrollment(ctx context.Context, courseID, userID string) (bool, error) {
-	var exists bool
-	query := `SELECT EXISTS (
-		SELECT 1 FROM enrollments
+// EnrollmentTier returns the tier of the user's enrollment in the course if it is still valid, or ""
+// when they have none.
+func (r *CourseRepository) EnrollmentTier(ctx context.Context, courseID, userID string) (Tier, error) {
+	var tier Tier
+	query := `SELECT tier FROM enrollments
 		WHERE course_id = $1 AND user_id = $2
 		  AND status IN ('active', 'completed')
-		  AND (expires_at IS NULL OR expires_at > now())
-	)`
-	err := r.db.QueryRowContext(ctx, query, courseID, userID).Scan(&exists)
-	return exists, err
+		  AND (expires_at IS NULL OR expires_at > now())`
+	err := r.db.QueryRowContext(ctx, query, courseID, userID).Scan(&tier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return tier, err
 }
 
 // UpdateCourse saves the editable fields of a course, but only if it belongs to this instructor.

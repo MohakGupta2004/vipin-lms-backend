@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/lib/utils"
@@ -30,9 +31,10 @@ const (
 
 // UpdateNoteRequest changes only the fields that are sent.
 type UpdateNoteRequest struct {
-	Title       *string `json:"title"`
-	Description *string `json:"description"`
-	IsFree      *bool   `json:"isFree"` // open to users previewing the course
+	Title       *string  `json:"title"`
+	Description *string  `json:"description"`
+	Tiers       []string `json:"tiers"`  // free, plus, premium; ultra is always included
+	IsFree      *bool    `json:"isFree"` // deprecated: use tiers
 }
 
 type NoteHandler struct {
@@ -48,14 +50,15 @@ func NewNoteHandler(noteService *service.NoteService) *NoteHandler {
 // UploadNote godoc
 //
 //	@Summary		Share a PDF note on a lesson
-//	@Description	Course owner (instructor or admin) uploads a PDF note to a lesson of their course. Max 25 MB. isFree lets users previewing the course open it even when its lesson is paid.
+//	@Description	Course owner (instructor or admin) uploads a PDF note to a lesson of their course. Max 25 MB. tiers lists who can open it (default plus and premium; ultra always can); free lets users who are not enrolled open it too, even when its lesson is paid.
 //	@Tags			notes
 //	@Accept			multipart/form-data
 //	@Produce		json
 //	@Param			id			path		string									true	"Lesson ID"
 //	@Param			title		formData	string									true	"Note title (max 200 characters)"
 //	@Param			description	formData	string									false	"Short description (max 2000 characters)"
-//	@Param			isFree		formData	bool									false	"Free preview: open without enrolling (default false)"
+//	@Param			tiers		formData	[]string								false	"Tiers that can open the note: free, plus, premium (repeat the field). Default plus and premium; ultra is always included"
+//	@Param			isFree		formData	bool									false	"Deprecated: true is the same as tiers=free"
 //	@Param			file		formData	file									true	"PDF file"
 //	@Success		201			{object}	utils.JSONResponse{data=models.Note}	"Note uploaded"
 //	@Failure		400			{object}	utils.JSONResponse						"Invalid form, file is not a PDF, or too large"
@@ -92,17 +95,20 @@ func (h *NoteHandler) UploadNote(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	isFree := false
+	tiers := formTiers(r)
 	if v := r.FormValue("isFree"); v != "" {
-		isFree, err = strconv.ParseBool(v)
+		isFree, err := strconv.ParseBool(v)
 		if err != nil {
 			utils.WriteJSONResponse(w, http.StatusBadRequest, "isFree must be true or false")
 			return
 		}
+		if isFree && tiers == nil {
+			tiers = []string{"free"}
+		}
 	}
 
 	note, err := h.noteService.UploadNote(r.Context(), user, r.PathValue("id"),
-		r.FormValue("title"), r.FormValue("description"), header.Filename, isFree, file)
+		r.FormValue("title"), r.FormValue("description"), header.Filename, tiers, file)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -211,7 +217,7 @@ func (h *NoteHandler) DownloadNote(w http.ResponseWriter, r *http.Request) {
 // UpdateNote godoc
 //
 //	@Summary		Edit a note
-//	@Description	Course owner (instructor or admin) edits a note's title, description, or whether it is free. Free notes open for users previewing the course without enrolling. Only the fields that are sent change; the PDF itself cannot be replaced.
+//	@Description	Course owner (instructor or admin) edits a note's title, description, or the tiers that can open it (free, plus, premium; ultra always can). Free notes open for users who are not enrolled. Only the fields that are sent change; the PDF itself cannot be replaced.
 //	@Tags			notes
 //	@Accept			json
 //	@Produce		json
@@ -241,6 +247,7 @@ func (h *NoteHandler) UpdateNote(w http.ResponseWriter, r *http.Request) {
 	note, err := h.noteService.UpdateNote(r.Context(), user, r.PathValue("id"), service.UpdateNoteInput{
 		Title:       req.Title,
 		Description: req.Description,
+		Tiers:       req.Tiers,
 		IsFree:      req.IsFree,
 	})
 	if err != nil {
@@ -285,4 +292,23 @@ func extendDeadlines(w http.ResponseWriter) {
 	deadline := time.Now().Add(noteTransferTimeout)
 	_ = rc.SetReadDeadline(deadline)
 	_ = rc.SetWriteDeadline(deadline)
+}
+
+// formTiers reads the repeated "tiers" field of a multipart form. It is nil when the field is not
+// sent (use the default) and empty when it is sent blank (ultra only).
+func formTiers(r *http.Request) []string {
+	if r.MultipartForm == nil {
+		return nil
+	}
+	values, sent := r.MultipartForm.Value["tiers"]
+	if !sent {
+		return nil
+	}
+	tiers := []string{}
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			tiers = append(tiers, v)
+		}
+	}
+	return tiers
 }

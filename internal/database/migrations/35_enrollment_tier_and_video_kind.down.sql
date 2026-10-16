@@ -1,0 +1,2 @@
+ALTER TABLE videos DROP COLUMN kind;
+ALTER TABLE enrollments DROP COLUMN tier;

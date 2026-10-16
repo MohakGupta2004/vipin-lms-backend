@@ -22,15 +22,20 @@ func NewVideoHandler(videoService *service.VideoService) *VideoHandler {
 }
 
 type requestVideoUploadBody struct {
-	FileName    string `json:"fileName"`
-	Description string `json:"description"` // optional, what the lecture covers
-	IsFree      bool   `json:"isFree"`
+	FileName    string   `json:"fileName"`
+	Description string   `json:"description"` // optional, what the lecture covers
+	Kind        string   `json:"kind"`        // offline (default) or meet
+	Tiers       []string `json:"tiers"`       // free, plus, premium; defaults by kind; ultra is always included
+	IsFree      bool     `json:"isFree"`      // deprecated: true is the same as tiers [free]
 }
 
 // updateVideoBody holds the video fields to change; omitted fields stay as they are.
 type updateVideoBody struct {
-	Title       *string `json:"title"`
-	Description *string `json:"description"`
+	Title       *string  `json:"title"`
+	Description *string  `json:"description"`
+	Kind        *string  `json:"kind"`   // offline or meet
+	Tiers       []string `json:"tiers"`  // free, plus, premium; ultra is always included
+	IsFree      *bool    `json:"isFree"` // deprecated: use tiers
 }
 
 // VideoUploadResponse is a new video plus the signed URL to upload its file to.
@@ -55,7 +60,7 @@ type VideoResponse struct {
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string											true	"Lesson ID"
-//	@Param			body	body		requestVideoUploadBody							true	"File name, optional description, and whether the video is free to watch"
+//	@Param			body	body		requestVideoUploadBody							true	"File name, optional description, kind (offline or meet) and the tiers that can watch it"
 //	@Success		201		{object}	utils.JSONResponse{data=VideoUploadResponse}	"Upload started"
 //	@Failure		400		{object}	utils.JSONResponse								"Invalid body or unsupported file name"
 //	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
@@ -80,7 +85,11 @@ func (h *VideoHandler) RequestUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	up, err := h.videoService.RequestUpload(r.Context(), user, r.PathValue("id"), body.FileName, body.Description, body.IsFree)
+	tiers := body.Tiers
+	if tiers == nil && body.IsFree {
+		tiers = []string{"free"}
+	}
+	up, err := h.videoService.RequestUpload(r.Context(), user, r.PathValue("id"), body.FileName, body.Description, body.Kind, tiers)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -183,8 +192,8 @@ func (h *VideoHandler) GetVideo(w http.ResponseWriter, r *http.Request) {
 
 // UpdateVideo godoc
 //
-//	@Summary		Edit a video's title and description
-//	@Description	The uploader (who must still own the course) changes the title or the description students see under the player. Omitted fields are left as they are; an empty description removes it.
+//	@Summary		Edit a video's details, section and access
+//	@Description	The uploader (who must still own the course) changes the title, the description students see under the player, the section (kind: offline or meet) or the tiers that can watch it. Omitted fields are left as they are; an empty description removes it.
 //	@Tags			videos
 //	@Accept			json
 //	@Produce		json
@@ -214,7 +223,7 @@ func (h *VideoHandler) UpdateVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	video, err := h.videoService.UpdateVideo(r.Context(), user, r.PathValue("id"),
-		service.UpdateVideoInput{Title: body.Title, Description: body.Description})
+		service.UpdateVideoInput{Title: body.Title, Description: body.Description, Kind: body.Kind, Tiers: body.Tiers, IsFree: body.IsFree})
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -315,10 +324,11 @@ func playlistBaseURL(r *http.Request, videoID string) string {
 // ListLessonVideos godoc
 //
 //	@Summary		List a lesson's videos
-//	@Description	Owner sees every video. Students see ready videos of published lessons. Users previewing a published course they are not enrolled in see them too, with locked=true on the ones they cannot stream.
+//	@Description	Owner sees every video. Students see ready videos of published lessons. Users not enrolled, or enrolled on a lower tier, see them too, with locked=true on the ones their tier cannot stream.
 //	@Tags			videos
 //	@Produce		json
 //	@Param			id	path		string									true	"Lesson ID"
+//	@Param			kind	query		string									false	"Only videos of this kind: offline or meet"
 //	@Success		200	{object}	utils.JSONResponse{data=VideosResponse}	"Videos"
 //	@Failure		401	{object}	utils.JSONResponse						"Not logged in"
 //	@Failure		404	{object}	utils.JSONResponse						"Lesson not found, or not visible to this user"
@@ -330,7 +340,7 @@ func (h *VideoHandler) ListLessonVideos(w http.ResponseWriter, r *http.Request) 
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
 		return
 	}
-	videos, err := h.videoService.ListLessonVideos(r.Context(), user, r.PathValue("id"))
+	videos, err := h.videoService.ListLessonVideos(r.Context(), user, r.PathValue("id"), r.URL.Query().Get("kind"))
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -341,10 +351,11 @@ func (h *VideoHandler) ListLessonVideos(w http.ResponseWriter, r *http.Request) 
 // ListCourseVideos godoc
 //
 //	@Summary		List a course's videos
-//	@Description	Owner sees every video. Students see ready videos of published lessons. Users previewing a published course they are not enrolled in see them too, with locked=true on the ones they cannot stream.
+//	@Description	Owner sees every video. Students see ready videos of published lessons. Users not enrolled, or enrolled on a lower tier, see them too, with locked=true on the ones their tier cannot stream.
 //	@Tags			videos
 //	@Produce		json
 //	@Param			id	path		string									true	"Course ID"
+//	@Param			kind	query		string									false	"Only videos of this kind: offline or meet"
 //	@Success		200	{object}	utils.JSONResponse{data=VideosResponse}	"Videos"
 //	@Failure		401	{object}	utils.JSONResponse						"Not logged in"
 //	@Failure		404	{object}	utils.JSONResponse						"Course not found, or not visible to this user"
@@ -356,7 +367,7 @@ func (h *VideoHandler) ListCourseVideos(w http.ResponseWriter, r *http.Request) 
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
 		return
 	}
-	videos, err := h.videoService.ListCourseVideos(r.Context(), user, r.PathValue("id"))
+	videos, err := h.videoService.ListCourseVideos(r.Context(), user, r.PathValue("id"), r.URL.Query().Get("kind"))
 	if err != nil {
 		writeServiceError(w, err)
 		return

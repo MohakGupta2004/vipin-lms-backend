@@ -35,11 +35,12 @@ var (
 type CreateQuizInput struct {
 	Title        string
 	Description  string
-	Type         string // "" = mock_test
-	TimeLimitSec *int   // mock_test only
-	PassPercent  *int   // mock_test only, nil = 70
-	IsFree       bool
-	Status       string // "" = published
+	Type         string   // "" = mock_test
+	TimeLimitSec *int     // mock_test only
+	PassPercent  *int     // mock_test only, nil = 70
+	Tiers        []string // nil = plus and premium; ultra is always included
+	IsFree       bool     // deprecated: true is the same as tiers [free]
+	Status       string   // "" = published
 	Questions    []CreateQuestionInput
 }
 
@@ -51,7 +52,8 @@ type UpdateQuizInput struct {
 	Type         *string
 	TimeLimitSec *int
 	PassPercent  *int
-	IsFree       *bool
+	Tiers        []string // nil = unchanged
+	IsFree       *bool    // deprecated: true adds the free tier, false removes it
 	Status       *string
 	Questions    *[]CreateQuestionInput
 }
@@ -132,8 +134,15 @@ func buildQuiz(in CreateQuizInput) (*models.Quiz, error) {
 		Type:         strings.TrimSpace(in.Type),
 		TimeLimitSec: in.TimeLimitSec,
 		PassPercent:  in.PassPercent,
-		IsFree:       in.IsFree,
 		Status:       strings.TrimSpace(in.Status),
+	}
+	tiers := in.Tiers
+	if tiers == nil && in.IsFree {
+		tiers = []string{string(models.TierFree)}
+	}
+	var err error
+	if quiz.Tiers, err = normalizeTiers(tiers, defaultContentTiers); err != nil {
+		return nil, err
 	}
 	if quiz.Type == "" {
 		quiz.Type = models.QuizTypeMockTest
@@ -309,8 +318,13 @@ func (s *QuizService) UpdateQuiz(ctx context.Context, user *models.User, quizID 
 	if in.PassPercent != nil {
 		quiz.PassPercent = in.PassPercent
 	}
-	if in.IsFree != nil {
-		quiz.IsFree = *in.IsFree
+	switch {
+	case in.Tiers != nil:
+		if quiz.Tiers, err = normalizeTiers(in.Tiers, nil); err != nil {
+			return nil, err
+		}
+	case in.IsFree != nil:
+		quiz.Tiers = legacyFreeTiers(quiz.Tiers, *in.IsFree, defaultContentTiers)
 	}
 	if in.Status != nil {
 		quiz.Status = strings.TrimSpace(*in.Status)
@@ -374,7 +388,7 @@ func (s *QuizService) ownedQuiz(ctx context.Context, user *models.User, quizID s
 }
 
 // ListQuizzes returns a lesson's quizzes, without questions, for the instructor or an enrolled student.
-// Previewers get them too, with locked set on those they cannot open. A non-empty quizType keeps
+// Users without the tier get them too, with locked set on those they cannot open. A non-empty quizType keeps
 // only quizzes of that type.
 // Students only see published quizzes of published lessons.
 func (s *QuizService) ListQuizzes(ctx context.Context, user *models.User, lessonID, quizType string) ([]models.Quiz, error) {
@@ -392,7 +406,7 @@ func (s *QuizService) ListQuizzes(ctx context.Context, user *models.User, lesson
 		return nil, err
 	}
 
-	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, lesson.CourseID)
+	isTeacher, tier, err := authorizeTier(ctx, s.lessonRepo, user, lesson.CourseID)
 	if errors.Is(err, ErrCourseNotFound) {
 		return nil, ErrLessonNotFound
 	}
@@ -403,12 +417,12 @@ func (s *QuizService) ListQuizzes(ctx context.Context, user *models.User, lesson
 		return nil, ErrLessonNotFound
 	}
 	quizzes, err := s.quizRepo.ListByLesson(ctx, lessonID, isTeacher, quizType)
-	if err != nil || !preview {
+	if err != nil || tier == models.TierUltra {
 		return quizzes, err
 	}
-	// Previewers see every quiz, but can only open those marked free; a free lesson does not unlock them.
+	// Everyone sees every quiz, but can only open those tagged for their tier; a free lesson does not unlock them.
 	for i := range quizzes {
-		quizzes[i].Locked = !quizzes[i].IsFree
+		quizzes[i].Locked = !models.CanAccess(tier, quizzes[i].Tiers)
 	}
 	return quizzes, nil
 }
@@ -587,8 +601,7 @@ func (s *QuizService) ListAttempts(ctx context.Context, user *models.User, quizI
 }
 
 // authorizeQuiz loads a quiz the user may see: the course's instructor sees every quiz, an enrolled
-// student only published quizzes of published lessons, and a user previewing the course only those
-// that are marked free. Anything else looks like a missing quiz.
+// student only published quizzes of published lessons, and only those tagged for their tier. Anything else looks like a missing quiz.
 func (s *QuizService) authorizeQuiz(ctx context.Context, user *models.User, quizID string) (*models.Quiz, bool, error) {
 	if !uuidPattern.MatchString(quizID) {
 		return nil, false, ErrQuizNotFound
@@ -601,7 +614,7 @@ func (s *QuizService) authorizeQuiz(ctx context.Context, user *models.User, quiz
 		return nil, false, err
 	}
 
-	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, quiz.CourseID)
+	isTeacher, tier, err := authorizeTier(ctx, s.lessonRepo, user, quiz.CourseID)
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrCourseNotFound) {
 		return nil, false, ErrQuizNotFound
 	}
@@ -611,7 +624,7 @@ func (s *QuizService) authorizeQuiz(ctx context.Context, user *models.User, quiz
 	if !isTeacher && (quiz.Status != "published" || !quiz.LessonPublished) {
 		return nil, false, ErrQuizNotFound
 	}
-	if preview && !quiz.IsFree {
+	if !models.CanAccess(tier, quiz.Tiers) {
 		return nil, false, ErrQuizNotFound
 	}
 	return quiz, isTeacher, nil

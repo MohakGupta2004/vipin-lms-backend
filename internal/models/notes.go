@@ -9,14 +9,17 @@ import (
 // Note is a PDF an instructor shared on a lesson. It is a row of the notes table with
 // visibility "course" and a file attached. Text-only notes (no file) are not returned here.
 type Note struct {
-	ID           string    `json:"id"`
-	CourseID     string    `json:"courseId"`
-	LessonID     string    `json:"lessonId"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	FileName     string    `json:"fileName"`
-	SizeBytes    int64     `json:"sizeBytes"`
-	IsFree       bool      `json:"isFree"` // open to users previewing the course; a free lesson does not make its notes free
+	ID          string `json:"id"`
+	CourseID    string `json:"courseId"`
+	LessonID    string `json:"lessonId"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	FileName    string `json:"fileName"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	// Tiers lists the tiers that can open the note; ultra is implied. IsFree is read-only: free is in Tiers.
+	// A free lesson does not make its notes free.
+	Tiers        []string  `json:"tiers"`
+	IsFree       bool      `json:"isFree"`
 	UploadedBy   string    `json:"uploadedBy"`
 	UploaderName string    `json:"uploaderName"`
 	CreatedAt    time.Time `json:"createdAt"`
@@ -39,15 +42,15 @@ func NewNoteRepository(db *sql.DB) *NoteRepository {
 
 // Create saves a note row and fills in the generated fields.
 func (r *NoteRepository) Create(ctx context.Context, n *Note) error {
-	query := `INSERT INTO notes (author_id, course_id, lesson_id, title, content, visibility, file_name, object_key, size_bytes, is_free)
-		VALUES ($1, $2, $3, $4, $5, 'course', $6, $7, $8, $9)
+	query := `INSERT INTO notes (author_id, course_id, lesson_id, title, content, visibility, file_name, object_key, size_bytes, tiers)
+		VALUES ($1, $2, $3, $4, $5, 'course', $6, $7, $8, $9::text[])
 		RETURNING id, created_at`
 
 	return r.db.QueryRowContext(ctx, query, n.UploadedBy, n.CourseID, n.LessonID, n.Title, n.Description,
-		n.FileName, n.ObjectKey, n.SizeBytes, n.IsFree).Scan(&n.ID, &n.CreatedAt)
+		n.FileName, n.ObjectKey, n.SizeBytes, tiersParam(n.Tiers)).Scan(&n.ID, &n.CreatedAt)
 }
 
-const noteSelect = `SELECT n.id, n.course_id, n.lesson_id, COALESCE(n.title, ''), n.content, n.file_name, n.size_bytes, n.is_free,
+const noteSelect = `SELECT n.id, n.course_id, n.lesson_id, COALESCE(n.title, ''), n.content, n.file_name, n.size_bytes, n.tiers, n.is_free,
 		n.author_id, u.first_name || ' ' || u.last_name, n.created_at, n.object_key, l.is_published
 	FROM notes n
 	JOIN users u ON u.id = n.author_id
@@ -55,7 +58,7 @@ const noteSelect = `SELECT n.id, n.course_id, n.lesson_id, COALESCE(n.title, '')
 	WHERE n.object_key IS NOT NULL AND n.visibility = 'course' AND n.deleted_at IS NULL`
 
 func scanNote(row interface{ Scan(...any) error }, n *Note) error {
-	return row.Scan(&n.ID, &n.CourseID, &n.LessonID, &n.Title, &n.Description, &n.FileName, &n.SizeBytes, &n.IsFree,
+	return row.Scan(&n.ID, &n.CourseID, &n.LessonID, &n.Title, &n.Description, &n.FileName, &n.SizeBytes, scanTiers(&n.Tiers), &n.IsFree,
 		&n.UploadedBy, &n.UploaderName, &n.CreatedAt, &n.ObjectKey, &n.LessonPublished)
 }
 
@@ -100,13 +103,13 @@ func (r *NoteRepository) Get(ctx context.Context, noteID string) (*Note, error) 
 	return &n, nil
 }
 
-// Update saves a PDF note's title, description and free flag. It returns sql.ErrNoRows if the note
+// Update saves a PDF note's title, description and tiers. It returns sql.ErrNoRows if the note
 // does not exist.
 func (r *NoteRepository) Update(ctx context.Context, n *Note) error {
 	var id string
-	query := `UPDATE notes SET title = $1, content = $2, is_free = $3
+	query := `UPDATE notes SET title = $1, content = $2, tiers = $3::text[]
 		WHERE id = $4 AND object_key IS NOT NULL AND deleted_at IS NULL RETURNING id`
-	return r.db.QueryRowContext(ctx, query, n.Title, n.Description, n.IsFree, n.ID).Scan(&id)
+	return r.db.QueryRowContext(ctx, query, n.Title, n.Description, tiersParam(n.Tiers), n.ID).Scan(&id)
 }
 
 // Delete removes the note row and returns its storage key. It returns sql.ErrNoRows if the note

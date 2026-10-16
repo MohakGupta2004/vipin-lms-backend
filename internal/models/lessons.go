@@ -36,32 +36,35 @@ func NewLessonRepository(db *sql.DB) *LessonRepository {
 // CourseAccess says how a user relates to a course. It returns sql.ErrNoRows if the course
 // does not exist or is deleted.
 //   - isInstructor: the user is the course's instructor_id (the caller still checks the role).
-//   - isEnrolled: the course is published and the user has an enrollment that is still valid.
-//     Students never see the content of draft or archived courses.
+//   - enrolledTier: the course is published and the user has an enrollment that is still valid;
+//     it is that enrollment's tier. Students never see the content of draft or archived courses.
 func (r *LessonRepository) CourseAccess(ctx context.Context, courseID, userID string) (access CourseAccessInfo, err error) {
 	query := `
 		SELECT c.instructor_id = $2,
 		       c.status = 'published',
 		       c.is_free,
-		       c.status = 'published' AND EXISTS (
-		           SELECT 1 FROM enrollments e
+		       COALESCE((
+		           SELECT e.tier FROM enrollments e
 		           WHERE e.course_id = c.id
+		             AND c.status = 'published'
 		             AND e.user_id = $2
 		             AND e.status IN ('active', 'completed')
 		             AND (e.expires_at IS NULL OR e.expires_at > now())
-		       )
+		           ORDER BY CASE e.tier WHEN 'ultra' THEN 3 WHEN 'premium' THEN 2 ELSE 1 END DESC
+		           LIMIT 1
+		       ), '')
 		FROM courses c
 		WHERE c.id = $1 AND c.deleted_at IS NULL`
 
 	err = r.db.QueryRowContext(ctx, query, courseID, userID).
-		Scan(&access.IsInstructor, &access.Published, &access.Free, &access.IsEnrolled)
+		Scan(&access.IsInstructor, &access.Published, &access.Free, &access.EnrolledTier)
 	return access, err
 }
 
 // CourseAccessInfo is what CourseAccess knows about one user and one course.
 type CourseAccessInfo struct {
 	IsInstructor bool // the user's id is the course's instructor_id
-	IsEnrolled   bool // valid enrollment in the published course
+	EnrolledTier Tier // tier of the user's valid enrollment in the published course; "" = not enrolled
 	Published    bool
 	Free         bool // the whole course is free
 }

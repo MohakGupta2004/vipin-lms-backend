@@ -28,7 +28,8 @@ type Quiz struct {
 	Type          string     `json:"type"`         // mock_test or practice
 	TimeLimitSec  *int       `json:"timeLimitSec"` // nil = untimed
 	PassPercent   *int       `json:"passPercent"`  // nil for practice sets
-	IsFree        bool       `json:"isFree"`
+	Tiers         []string   `json:"tiers"`        // tiers that can open the quiz; ultra is implied
+	IsFree        bool       `json:"isFree"`       // read-only: free is in Tiers
 	Status        string     `json:"status"`
 	QuestionCount int        `json:"questionCount"`
 	CreatedAt     time.Time  `json:"createdAt"`
@@ -110,11 +111,11 @@ func (r *QuizRepository) CreateQuiz(ctx context.Context, q *Quiz) error {
 	// Rollback does nothing if Commit already succeeded.
 	defer tx.Rollback()
 
-	query := `INSERT INTO quizzes (course_id, lesson_id, created_by, title, description, type, time_limit_sec, pass_percent, is_free, status)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10)
+	query := `INSERT INTO quizzes (course_id, lesson_id, created_by, title, description, type, time_limit_sec, pass_percent, tiers, status)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9::text[], $10)
 		RETURNING id, created_at`
 	err = tx.QueryRowContext(ctx, query, q.CourseID, q.LessonID, q.CreatedBy, q.Title, q.Description,
-		q.Type, q.TimeLimitSec, q.PassPercent, q.IsFree, q.Status).Scan(&q.ID, &q.CreatedAt)
+		q.Type, q.TimeLimitSec, q.PassPercent, tiersParam(q.Tiers), q.Status).Scan(&q.ID, &q.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -170,9 +171,9 @@ func (r *QuizRepository) UpdateQuiz(ctx context.Context, q *Quiz, replaceQuestio
 	}
 
 	query := `UPDATE quizzes SET title = $1, description = NULLIF($2, ''), time_limit_sec = $3,
-			pass_percent = $4, is_free = $5, status = $6, type = $7
+			pass_percent = $4, tiers = $5::text[], status = $6, type = $7
 		WHERE id = $8`
-	_, err = tx.ExecContext(ctx, query, q.Title, q.Description, q.TimeLimitSec, q.PassPercent, q.IsFree, q.Status, q.Type, q.ID)
+	_, err = tx.ExecContext(ctx, query, q.Title, q.Description, q.TimeLimitSec, q.PassPercent, tiersParam(q.Tiers), q.Status, q.Type, q.ID)
 	if err != nil {
 		return err
 	}
@@ -210,7 +211,7 @@ func (r *QuizRepository) SoftDelete(ctx context.Context, quizID string) error {
 
 // quizColumns are the columns scanQuiz reads, from quizzes aliased q joined to its lesson aliased l.
 const quizColumns = `q.id, q.course_id, q.lesson_id, q.created_by, q.title, COALESCE(q.description, ''),
-		q.type, q.time_limit_sec, q.pass_percent, q.is_free, q.status,
+		q.type, q.time_limit_sec, q.pass_percent, q.tiers, q.is_free, q.status,
 		(SELECT COUNT(*) FROM questions qu WHERE qu.quiz_id = q.id), q.created_at, l.is_published`
 
 const quizSelect = `SELECT ` + quizColumns + `
@@ -221,7 +222,7 @@ const quizSelect = `SELECT ` + quizColumns + `
 func scanQuiz(row interface{ Scan(...any) error }, q *Quiz) error {
 	var timeLimit, passPercent sql.NullInt32
 	err := row.Scan(&q.ID, &q.CourseID, &q.LessonID, &q.CreatedBy, &q.Title, &q.Description,
-		&q.Type, &timeLimit, &passPercent, &q.IsFree, &q.Status, &q.QuestionCount, &q.CreatedAt, &q.LessonPublished)
+		&q.Type, &timeLimit, &passPercent, scanTiers(&q.Tiers), &q.IsFree, &q.Status, &q.QuestionCount, &q.CreatedAt, &q.LessonPublished)
 	if err != nil {
 		return err
 	}

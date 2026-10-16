@@ -21,8 +21,9 @@ type CreateQuizRequest struct {
 	Type         string                  `json:"type"`         // mock_test or practice, defaults to mock_test
 	TimeLimitSec *int                    `json:"timeLimitSec"` // mock_test only; omit for an untimed quiz
 	PassPercent  *int                    `json:"passPercent"`  // mock_test only; defaults to 70
-	IsFree       bool                    `json:"isFree"`
-	Status       string                  `json:"status"` // draft or published, defaults to published
+	Tiers        []string                `json:"tiers"`        // free, plus, premium; defaults to plus and premium; ultra is always included
+	IsFree       bool                    `json:"isFree"`       // deprecated: use tiers
+	Status       string                  `json:"status"`       // draft or published, defaults to published
 	Questions    []CreateQuestionRequest `json:"questions"`
 }
 
@@ -45,7 +46,8 @@ type UpdateQuizRequest struct {
 	Type         *string                  `json:"type"`
 	TimeLimitSec *int                     `json:"timeLimitSec"`
 	PassPercent  *int                     `json:"passPercent"`
-	IsFree       *bool                    `json:"isFree"`
+	Tiers        []string                 `json:"tiers"`
+	IsFree       *bool                    `json:"isFree"` // deprecated: use tiers
 	Status       *string                  `json:"status"`
 	Questions    *[]CreateQuestionRequest `json:"questions"`
 }
@@ -109,6 +111,7 @@ func (h *QuizHandler) CreateQuiz(w http.ResponseWriter, r *http.Request) {
 		Type:         req.Type,
 		TimeLimitSec: req.TimeLimitSec,
 		PassPercent:  req.PassPercent,
+		Tiers:        req.Tiers,
 		IsFree:       req.IsFree,
 		Status:       req.Status,
 		Questions:    questionInputs(req.Questions),
@@ -178,6 +181,7 @@ func (h *QuizHandler) UpdateQuiz(w http.ResponseWriter, r *http.Request) {
 		Type:         req.Type,
 		TimeLimitSec: req.TimeLimitSec,
 		PassPercent:  req.PassPercent,
+		Tiers:        req.Tiers,
 		IsFree:       req.IsFree,
 		Status:       req.Status,
 	}
@@ -262,7 +266,7 @@ func (h *QuizHandler) UpdateQuizStatus(w http.ResponseWriter, r *http.Request) {
 // ListQuizzes godoc
 //
 //	@Summary		List a lesson's quizzes
-//	@Description	Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users previewing a published course see them too, with locked set on those not marked free (a free lesson does not unlock its quizzes). Filter with ?type=mock_test or ?type=practice.
+//	@Description	Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users not enrolled, or enrolled on a lower tier, see them too, with locked set on those their tier cannot open (a free lesson does not unlock its quizzes). Filter with ?type=mock_test or ?type=practice.
 //	@Tags			quizzes
 //	@Produce		json
 //	@Param			id	path		string									true	"Lesson ID"

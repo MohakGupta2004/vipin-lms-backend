@@ -10,6 +10,12 @@ import (
 
 const maxVideoErrorChars = 1000
 
+// Video kinds: offline recordings and Meet (live class) recordings. Both are uploaded the same way.
+const (
+	VideoKindOffline = "offline"
+	VideoKindMeet    = "meet"
+)
+
 // Video is an uploaded lesson video. Lifecycle: uploading → processing → ready | failed.
 type Video struct {
 	ID       string `json:"id"`
@@ -17,14 +23,17 @@ type Video struct {
 	CourseID string `json:"courseId"`
 	Title    string `json:"title"`
 	// Description is what the lecture covers, shown under the player. "" = none written.
-	Description string    `json:"description"`
-	IsFree      bool      `json:"isFree"`
-	Status      string    `json:"status"`
-	Error       string    `json:"error,omitempty"`
-	SizeBytes   int64     `json:"sizeBytes,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	UploadedBy  string    `json:"-"`
+	Description string `json:"description"`
+	Kind        string `json:"kind"`
+	// Tiers lists the tiers that can stream the video; ultra is implied. IsFree is read-only: free is in Tiers.
+	Tiers      []string  `json:"tiers"`
+	IsFree     bool      `json:"isFree"`
+	Status     string    `json:"status"`
+	Error      string    `json:"error,omitempty"`
+	SizeBytes  int64     `json:"sizeBytes,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+	UploadedBy string    `json:"-"`
 	// Locked is set for users previewing a course: they see the title but cannot stream it.
 	Locked bool `json:"locked,omitempty"`
 	// Progress is the requesting user's own playback of this video, when listed for a viewer. Nil = never played.
@@ -70,7 +79,7 @@ func NewVideoRepository(db *sql.DB) *VideoRepository {
 }
 
 // videoColumns are the columns scanVideo reads, from videos aliased v.
-const videoColumns = `v.id, COALESCE(v.lesson_id::text, ''), COALESCE(v.course_id::text, ''), v.uploaded_by, v.title, COALESCE(v.description, ''), v.is_free,
+const videoColumns = `v.id, COALESCE(v.lesson_id::text, ''), COALESCE(v.course_id::text, ''), v.uploaded_by, v.title, COALESCE(v.description, ''), v.kind, v.tiers, v.is_free,
 		v.status, COALESCE(v.error, ''), COALESCE(v.size_bytes, 0), v.created_at, v.updated_at,
 		v.original_key, COALESCE(v.transcode_job, ''), COALESCE(v.hls_prefix, '')`
 
@@ -78,17 +87,17 @@ const videoSelect = `SELECT ` + videoColumns + `
 	FROM videos v`
 
 func scanVideo(row interface{ Scan(...any) error }, v *Video) error {
-	return row.Scan(&v.ID, &v.LessonID, &v.CourseID, &v.UploadedBy, &v.Title, &v.Description, &v.IsFree,
+	return row.Scan(&v.ID, &v.LessonID, &v.CourseID, &v.UploadedBy, &v.Title, &v.Description, &v.Kind, scanTiers(&v.Tiers), &v.IsFree,
 		&v.Status, &v.Error, &v.SizeBytes, &v.CreatedAt, &v.UpdatedAt,
 		&v.OriginalKey, &v.TranscodeJob, &v.HLSPrefix)
 }
 
 // Create inserts a video in the 'uploading' state. v.ID must be set by the caller (it is part of the object key).
 func (r *VideoRepository) Create(ctx context.Context, v *Video) error {
-	query := `INSERT INTO videos (id, uploaded_by, course_id, lesson_id, title, description, is_free, original_key)
-		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8)
+	query := `INSERT INTO videos (id, uploaded_by, course_id, lesson_id, title, description, kind, tiers, original_key)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8::text[], $9)
 		RETURNING status, created_at, updated_at`
-	return r.db.QueryRowContext(ctx, query, v.ID, v.UploadedBy, v.CourseID, v.LessonID, v.Title, v.Description, v.IsFree, v.OriginalKey).
+	return r.db.QueryRowContext(ctx, query, v.ID, v.UploadedBy, v.CourseID, v.LessonID, v.Title, v.Description, v.Kind, tiersParam(v.Tiers), v.OriginalKey).
 		Scan(&v.Status, &v.CreatedAt, &v.UpdatedAt)
 }
 
@@ -106,6 +115,7 @@ type VideoListFilter struct {
 	CourseID  string
 	LessonID  string // empty = whole course
 	OnlyReady bool   // students: ready videos of published lessons
+	Kind      string // empty = both kinds
 }
 
 // List returns a course's videos in lesson order. Videos of deleted lessons are left out.
@@ -114,12 +124,13 @@ func (r *VideoRepository) List(ctx context.Context, f VideoListFilter) ([]Video,
 		WHERE v.course_id = $1
 		  AND ($2::uuid IS NULL OR v.lesson_id = $2::uuid)
 		  AND (NOT $3 OR (v.status = 'ready' AND l.is_published))
+		  AND ($4 = '' OR v.kind = $4)
 		ORDER BY l.position, v.created_at`
 	var lessonID any
 	if f.LessonID != "" {
 		lessonID = f.LessonID
 	}
-	rows, err := r.db.QueryContext(ctx, query, f.CourseID, lessonID, f.OnlyReady)
+	rows, err := r.db.QueryContext(ctx, query, f.CourseID, lessonID, f.OnlyReady, f.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -135,9 +146,10 @@ func (r *VideoRepository) List(ctx context.Context, f VideoListFilter) ([]Video,
 	return videos, rows.Err()
 }
 
-// UpdateDetails saves a video's title and description. It returns sql.ErrNoRows if the video does not exist.
-func (r *VideoRepository) UpdateDetails(ctx context.Context, id, title, description string) error {
-	return r.mustAffect(ctx, `UPDATE videos SET title = $2, description = NULLIF($3, '') WHERE id = $1`, id, title, description)
+// UpdateDetails saves a video's title, description, kind and tiers. It returns sql.ErrNoRows if the video does not exist.
+func (r *VideoRepository) UpdateDetails(ctx context.Context, id, title, description, kind string, tiers []string) error {
+	return r.mustAffect(ctx, `UPDATE videos SET title = $2, description = NULLIF($3, ''), kind = $4, tiers = $5::text[] WHERE id = $1`,
+		id, title, description, kind, tiersParam(tiers))
 }
 
 // MarkProcessing moves an 'uploading' video to 'processing'. It returns sql.ErrNoRows if the video is

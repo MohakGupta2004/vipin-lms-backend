@@ -80,6 +80,18 @@ type VideoUpload struct {
 type UpdateVideoInput struct {
 	Title       *string
 	Description *string
+	Kind        *string  // offline or meet: moves the video to the other section
+	Tiers       []string // nil = unchanged
+	IsFree      *bool    // deprecated: true adds the free tier, false removes it
+}
+
+// validateVideoKind accepts "" (meaning the default where one applies), offline and meet.
+func validateVideoKind(kind string) error {
+	switch kind {
+	case "", models.VideoKindOffline, models.VideoKindMeet:
+		return nil
+	}
+	return fmt.Errorf("%w: kind must be %s or %s", ErrInvalidInput, models.VideoKindOffline, models.VideoKindMeet)
 }
 
 func validateVideoDescription(description string) error {
@@ -91,9 +103,20 @@ func validateVideoDescription(description string) error {
 
 // RequestUpload lets the course owner start a video upload on a lesson of their course.
 // It creates the video row ('uploading') and returns a signed PUT URL straight to the bucket.
-func (s *VideoService) RequestUpload(ctx context.Context, user *models.User, lessonID, fileName, description string, isFree bool) (*VideoUpload, error) {
+// kind is offline (the default) or meet; tiers lists who can watch it (nil = the kind's default).
+func (s *VideoService) RequestUpload(ctx context.Context, user *models.User, lessonID, fileName, description, kind string, tiers []string) (*VideoUpload, error) {
 	if !user.CanTeach() {
 		return nil, ErrForbidden
+	}
+	if err := validateVideoKind(kind); err != nil {
+		return nil, err
+	}
+	if kind == "" {
+		kind = models.VideoKindOffline
+	}
+	tiers, err := normalizeTiers(tiers, defaultVideoTiers(kind))
+	if err != nil {
+		return nil, err
 	}
 	description = strings.TrimSpace(description)
 	if err := validateVideoDescription(description); err != nil {
@@ -129,7 +152,8 @@ func (s *VideoService) RequestUpload(ctx context.Context, user *models.User, les
 		UploadedBy:  user.ID,
 		Title:       name,
 		Description: description,
-		IsFree:      isFree,
+		Kind:        kind,
+		Tiers:       tiers,
 		OriginalKey: key,
 	}
 	if err := s.videoRepo.Create(ctx, video); err != nil {
@@ -231,7 +255,7 @@ func (s *VideoService) RetryTranscode(ctx context.Context, user *models.User, vi
 	return video, nil
 }
 
-// UpdateVideo lets the person who uploaded a video change its title and description.
+// UpdateVideo lets the person who uploaded a video change its title, description, section (kind) and tiers.
 func (s *VideoService) UpdateVideo(ctx context.Context, user *models.User, videoID string, in UpdateVideoInput) (*models.Video, error) {
 	video, err := s.ownedVideo(ctx, user, videoID)
 	if err != nil {
@@ -243,13 +267,27 @@ func (s *VideoService) UpdateVideo(ctx context.Context, user *models.User, video
 	if in.Description != nil {
 		video.Description = strings.TrimSpace(*in.Description)
 	}
+	if in.Kind != nil {
+		if err := validateVideoKind(*in.Kind); err != nil || *in.Kind == "" {
+			return nil, fmt.Errorf("%w: kind must be %s or %s", ErrInvalidInput, models.VideoKindOffline, models.VideoKindMeet)
+		}
+		video.Kind = *in.Kind
+	}
+	switch {
+	case in.Tiers != nil:
+		if video.Tiers, err = normalizeTiers(in.Tiers, nil); err != nil {
+			return nil, err
+		}
+	case in.IsFree != nil:
+		video.Tiers = legacyFreeTiers(video.Tiers, *in.IsFree, defaultVideoTiers(video.Kind))
+	}
 	if n := utf8.RuneCountInString(video.Title); n < 1 || n > maxVideoTitleChars {
 		return nil, fmt.Errorf("%w: title must be 1 to %d characters", ErrInvalidInput, maxVideoTitleChars)
 	}
 	if err := validateVideoDescription(video.Description); err != nil {
 		return nil, err
 	}
-	err = s.videoRepo.UpdateDetails(ctx, video.ID, video.Title, video.Description)
+	err = s.videoRepo.UpdateDetails(ctx, video.ID, video.Title, video.Description, video.Kind, video.Tiers)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrVideoNotFound
 	}
@@ -359,11 +397,11 @@ func (s *VideoService) watchableVideo(ctx context.Context, user *models.User, vi
 	if err != nil {
 		return nil, err
 	}
-	isTeacher, preview, err := s.videoAccess(ctx, user, lesson)
+	isTeacher, tier, err := s.videoAccess(ctx, user, lesson)
 	if err != nil {
 		return nil, notFoundAs(err, ErrVideoNotFound)
 	}
-	if preview && videoLocked(video) {
+	if videoLocked(video, tier) {
 		return nil, ErrVideoNotFound
 	}
 	if video.Status != "ready" || video.HLSPrefix == "" {
@@ -456,8 +494,12 @@ func rewritePlaylist(data []byte, signURI func(string) string) []byte {
 	return []byte(strings.Join(lines, "\n"))
 }
 
-// ListLessonVideos lists a lesson's videos. Owners see every status; students only ready videos of published lessons.
-func (s *VideoService) ListLessonVideos(ctx context.Context, user *models.User, lessonID string) ([]models.Video, error) {
+// ListLessonVideos lists a lesson's videos, optionally of one kind (offline or meet). Owners see every status;
+// students only ready videos of published lessons. Videos the user's tier cannot stream have locked set.
+func (s *VideoService) ListLessonVideos(ctx context.Context, user *models.User, lessonID, kind string) ([]models.Video, error) {
+	if err := validateVideoKind(kind); err != nil {
+		return nil, err
+	}
 	if !uuidPattern.MatchString(lessonID) {
 		return nil, ErrLessonNotFound
 	}
@@ -468,31 +510,34 @@ func (s *VideoService) ListLessonVideos(ctx context.Context, user *models.User, 
 	if err != nil {
 		return nil, err
 	}
-	isTeacher, preview, err := s.videoAccess(ctx, user, lesson)
+	isTeacher, tier, err := s.videoAccess(ctx, user, lesson)
 	if err != nil {
 		return nil, notFoundAs(err, ErrLessonNotFound)
 	}
 	videos, err := s.videoRepo.List(ctx, models.VideoListFilter{
-		CourseID: lesson.CourseID, LessonID: lesson.ID, OnlyReady: !isTeacher,
+		CourseID: lesson.CourseID, LessonID: lesson.ID, OnlyReady: !isTeacher, Kind: kind,
 	})
-	if err != nil || !preview {
-		return videos, err
+	if err != nil {
+		return nil, err
 	}
 	for i := range videos {
-		videos[i].Locked = videoLocked(&videos[i])
+		videos[i].Locked = videoLocked(&videos[i], tier)
 	}
 	return videos, nil
 }
 
 // ListCourseVideos lists every video of a course the user may see, in lesson order, each with the
 // user's own progress. Users previewing the course get every ready video so they can see the whole
-// curriculum, with locked set on the ones they cannot stream.
-func (s *VideoService) ListCourseVideos(ctx context.Context, user *models.User, courseID string) ([]models.Video, error) {
-	isTeacher, preview, err := s.courseAccess(ctx, user, courseID)
+// curriculum, with locked set on the ones their tier cannot stream. kind keeps one kind (offline or meet).
+func (s *VideoService) ListCourseVideos(ctx context.Context, user *models.User, courseID, kind string) ([]models.Video, error) {
+	if err := validateVideoKind(kind); err != nil {
+		return nil, err
+	}
+	isTeacher, tier, err := s.courseAccess(ctx, user, courseID)
 	if err != nil {
 		return nil, notFoundAs(err, ErrCourseNotFound)
 	}
-	videos, err := s.videoRepo.List(ctx, models.VideoListFilter{CourseID: courseID, OnlyReady: !isTeacher})
+	videos, err := s.videoRepo.List(ctx, models.VideoListFilter{CourseID: courseID, OnlyReady: !isTeacher, Kind: kind})
 	if err != nil {
 		return nil, err
 	}
@@ -502,39 +547,36 @@ func (s *VideoService) ListCourseVideos(ctx context.Context, user *models.User, 
 	}
 	for i := range videos {
 		videos[i].Progress = progress[videos[i].ID]
-		if preview {
-			videos[i].Locked = videoLocked(&videos[i])
-		}
+		videos[i].Locked = videoLocked(&videos[i], tier)
 	}
 	return videos, nil
 }
 
-// videoLocked reports whether a user previewing the course is shut out of a video: every video the
-// instructor has not marked free. The lesson's own free flag does not unlock its videos.
-func videoLocked(v *models.Video) bool {
-	return !v.IsFree
+// videoLocked reports whether a user on this tier is shut out of a video: every video not tagged for
+// the tier or free. The lesson's own free flag does not unlock its videos.
+func videoLocked(v *models.Video, tier models.Tier) bool {
+	return !models.CanAccess(tier, v.Tiers)
 }
 
-// courseAccess decides how a user may see a course's videos: in full (isTeacher, enrolled, or a free
-// course) or as a preview of a published course (preview: only free videos can be streamed).
-func (s *VideoService) courseAccess(ctx context.Context, user *models.User, courseID string) (isTeacher, preview bool, err error) {
-	isTeacher, preview, err = authorizePreview(ctx, s.lessonRepo, user, courseID)
+// courseAccess tells the tier a user has in a course, whose videos they may then list or stream.
+func (s *VideoService) courseAccess(ctx context.Context, user *models.User, courseID string) (isTeacher bool, tier models.Tier, err error) {
+	isTeacher, tier, err = authorizeTier(ctx, s.lessonRepo, user, courseID)
 	if errors.Is(err, ErrForbidden) {
-		return false, false, ErrCourseNotFound
+		return false, "", ErrCourseNotFound
 	}
-	return isTeacher, preview, err
+	return isTeacher, tier, err
 }
 
-// videoAccess decides how a user may see a lesson's videos. Non-owners never see unpublished lessons.
-func (s *VideoService) videoAccess(ctx context.Context, user *models.User, lesson *models.Lesson) (isTeacher, preview bool, err error) {
-	isTeacher, preview, err = s.courseAccess(ctx, user, lesson.CourseID)
+// videoAccess tells the tier a user has for a lesson's videos. Non-owners never see unpublished lessons.
+func (s *VideoService) videoAccess(ctx context.Context, user *models.User, lesson *models.Lesson) (isTeacher bool, tier models.Tier, err error) {
+	isTeacher, tier, err = s.courseAccess(ctx, user, lesson.CourseID)
 	if err != nil {
-		return false, false, err
+		return false, "", err
 	}
 	if !isTeacher && !lesson.IsPublished {
-		return false, false, ErrLessonNotFound
+		return false, "", ErrLessonNotFound
 	}
-	return isTeacher, preview, nil
+	return isTeacher, tier, nil
 }
 
 // notFoundAs maps "may not see it" errors to the caller's not-found error.

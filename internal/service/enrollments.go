@@ -24,7 +24,8 @@ const maxEnrollmentMonths = 60
 type CreateEnrollmentInput struct {
 	UserID   string
 	CourseID string
-	Months   int // how long the enrollment lasts
+	Months   int    // how long the enrollment lasts
+	Tier     string // plus, premium or ultra
 }
 
 type EnrollmentService struct {
@@ -52,6 +53,10 @@ func (s *EnrollmentService) CreateEnrollment(ctx context.Context, user *models.U
 	}
 	if !uuidPattern.MatchString(e.CourseID) {
 		return nil, fmt.Errorf("%w: courseId must be a valid id", ErrInvalidInput)
+	}
+	e.Tier = models.Tier(strings.TrimSpace(input.Tier))
+	if !e.Tier.IsEnrollmentTier() {
+		return nil, fmt.Errorf("%w: tier must be plus, premium or ultra", ErrInvalidInput)
 	}
 	if input.Months < 1 || input.Months > maxEnrollmentMonths {
 		return nil, fmt.Errorf("%w: months must be between 1 and %d", ErrInvalidInput, maxEnrollmentMonths)
@@ -100,20 +105,41 @@ func (s *EnrollmentService) ListEnrollments(ctx context.Context, user *models.Us
 	return s.enrollmentRepo.ListEnrollments(ctx, courseID, userID, limit, offset)
 }
 
-// UpdateEnrollmentStatus lets an admin change the status of an enrollment (for example cancel it).
-func (s *EnrollmentService) UpdateEnrollmentStatus(ctx context.Context, user *models.User, enrollmentID, status string) (*models.Enrollment, error) {
+// UpdateEnrollmentInput holds the enrollment fields to change. Nil fields are left as they are.
+type UpdateEnrollmentInput struct {
+	Status *string // active, completed, expired or cancelled
+	Tier   *string // plus, premium or ultra
+}
+
+// UpdateEnrollment lets an admin change the status (for example cancel) and/or the tier of an enrollment.
+func (s *EnrollmentService) UpdateEnrollment(ctx context.Context, user *models.User, enrollmentID string, in UpdateEnrollmentInput) (*models.Enrollment, error) {
 	if user.Role != models.RoleAdmin {
 		return nil, ErrForbidden
 	}
 	if !uuidPattern.MatchString(enrollmentID) {
 		return nil, ErrEnrollmentNotFound
 	}
-	status = strings.TrimSpace(status)
-	if status != "active" && status != "completed" && status != "expired" && status != "cancelled" {
-		return nil, fmt.Errorf("%w: status must be active, completed, expired or cancelled", ErrInvalidInput)
+	if in.Status == nil && in.Tier == nil {
+		return nil, fmt.Errorf("%w: send a status or a tier to change", ErrInvalidInput)
+	}
+	var status *string
+	if in.Status != nil {
+		st := strings.TrimSpace(*in.Status)
+		if st != "active" && st != "completed" && st != "expired" && st != "cancelled" {
+			return nil, fmt.Errorf("%w: status must be active, completed, expired or cancelled", ErrInvalidInput)
+		}
+		status = &st
+	}
+	var tier *models.Tier
+	if in.Tier != nil {
+		t := models.Tier(strings.TrimSpace(*in.Tier))
+		if !t.IsEnrollmentTier() {
+			return nil, fmt.Errorf("%w: tier must be plus, premium or ultra", ErrInvalidInput)
+		}
+		tier = &t
 	}
 
-	e, err := s.enrollmentRepo.UpdateStatus(ctx, enrollmentID, status)
+	e, err := s.enrollmentRepo.Update(ctx, enrollmentID, status, tier)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrEnrollmentNotFound
 	}

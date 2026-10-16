@@ -20,21 +20,29 @@ type UpdateDeckStatusRequest struct {
 	Status string `json:"status"` // draft or published
 }
 
+// SetDeckTiersRequest gives all of a deck's cards the same tiers: free, plus, premium (ultra is always included).
+type SetDeckTiersRequest struct {
+	Tiers []string `json:"tiers"`
+}
+
+// SetDeckFreeRequest is the deprecated form of SetDeckTiersRequest.
 type SetDeckFreeRequest struct {
 	IsFree bool `json:"isFree"`
 }
 
 type CreateFlashcardRequest struct {
-	Front  string `json:"front"`
-	Back   string `json:"back"`
-	IsFree bool   `json:"isFree"`
+	Front  string   `json:"front"`
+	Back   string   `json:"back"`
+	Tiers  []string `json:"tiers"`  // free, plus, premium; defaults to plus and premium; ultra is always included
+	IsFree bool     `json:"isFree"` // deprecated: use tiers
 }
 
 // UpdateFlashcardRequest changes only the fields that are sent.
 type UpdateFlashcardRequest struct {
-	Front  *string `json:"front"`
-	Back   *string `json:"back"`
-	IsFree *bool   `json:"isFree"`
+	Front  *string  `json:"front"`
+	Back   *string  `json:"back"`
+	Tiers  []string `json:"tiers"`
+	IsFree *bool    `json:"isFree"` // deprecated: use tiers
 }
 
 type ReviewFlashcardRequest struct {
@@ -155,10 +163,45 @@ func (h *FlashcardHandler) UpdateDeckStatus(w http.ResponseWriter, r *http.Reque
 	utils.WriteJSONResponse(w, http.StatusOK, deck)
 }
 
+// SetDeckTiers godoc
+//
+//	@Summary		Set the tiers of every card of a deck
+//	@Description	Course owner only. Gives all the deck's cards the same tiers at once (free, plus, premium; ultra is always included). Cards tagged free can be studied by users who are not enrolled.
+//	@Tags			flashcards
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string											true	"Deck ID"
+//	@Param			request	body		SetDeckTiersRequest								true	"Tiers"
+//	@Success		200		{object}	utils.JSONResponse{data=models.FlashcardDeck}	"Deck updated"
+//	@Failure		400		{object}	utils.JSONResponse								"Malformed payload or unknown tier"
+//	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse								"Not the course owner"
+//	@Failure		404		{object}	utils.JSONResponse								"Deck not found"
+//	@Failure		500		{object}	utils.JSONResponse								"Internal server error"
+//	@Router			/flashcard-decks/{id}/tiers [put]
+func (h *FlashcardHandler) SetDeckTiers(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+	var req SetDeckTiersRequest
+	if !decodeFlashcardBody(w, r, &req) {
+		return
+	}
+	deck, err := h.flashcardService.SetDeckTiers(r.Context(), user, r.PathValue("id"), req.Tiers)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, deck)
+}
+
 // SetDeckFree godoc
 //
 //	@Summary		Make every card of a deck free or paid
-//	@Description	Course owner only. Sets isFree on all the deck's cards at once; free cards can be studied by users previewing the course.
+//	@Description	Deprecated, use PUT /flashcard-decks/{id}/tiers. Course owner only. true gives all the deck's cards the free tier, false the default paid tiers.
+//	@Deprecated
 //	@Tags			flashcards
 //	@Accept			json
 //	@Produce		json
@@ -218,7 +261,7 @@ func (h *FlashcardHandler) DeleteDeck(w http.ResponseWriter, r *http.Request) {
 // ListDeckCards godoc
 //
 //	@Summary		List the cards of a deck
-//	@Description	Cards in order, each with the user's own rating. A user previewing the course (not enrolled in a paid course) gets the paid cards with locked true and front and back blank.
+//	@Description	Cards in order, each with the user's own rating. Cards the user's tier cannot study come back with locked true and front and back blank.
 //	@Tags			flashcards
 //	@Produce		json
 //	@Param			id	path		string										true	"Deck ID"
@@ -268,7 +311,7 @@ func (h *FlashcardHandler) CreateCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	card, err := h.flashcardService.CreateCard(r.Context(), user, r.PathValue("id"),
-		service.CreateCardInput{Front: req.Front, Back: req.Back, IsFree: req.IsFree})
+		service.CreateCardInput{Front: req.Front, Back: req.Back, Tiers: req.Tiers, IsFree: req.IsFree})
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -303,7 +346,7 @@ func (h *FlashcardHandler) UpdateCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	card, err := h.flashcardService.UpdateCard(r.Context(), user, r.PathValue("id"),
-		service.UpdateCardInput{Front: req.Front, Back: req.Back, IsFree: req.IsFree})
+		service.UpdateCardInput{Front: req.Front, Back: req.Back, Tiers: req.Tiers, IsFree: req.IsFree})
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -340,7 +383,7 @@ func (h *FlashcardHandler) DeleteCard(w http.ResponseWriter, r *http.Request) {
 // DeckSession godoc
 //
 //	@Summary		Study session for a deck
-//	@Description	Distinct cards of the deck in random order; cards rated low by the user come up more often. Users previewing the course only get the free cards.
+//	@Description	Distinct cards of the deck in random order; cards rated low by the user come up more often. Only cards the user's tier can study are included.
 //	@Tags			flashcards
 //	@Produce		json
 //	@Param			id		path		string										true	"Deck ID"

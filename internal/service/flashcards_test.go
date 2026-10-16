@@ -72,24 +72,29 @@ func TestSessionLimit(t *testing.T) {
 func TestMarkLockedCards(t *testing.T) {
 	cards := func() []models.Flashcard {
 		return []models.Flashcard{
-			{ID: "paid", Front: "secret q", Back: "secret a"},
-			{ID: "free", Front: "q", Back: "a", IsFree: true},
+			{ID: "plus", Front: "secret q", Back: "secret a", Tiers: []string{"plus"}},
+			{ID: "premium", Front: "secret q", Back: "secret a", Tiers: []string{"premium"}},
+			{ID: "free", Front: "q", Back: "a", Tiers: []string{"free"}},
 		}
 	}
 
-	previewed := cards()
-	markLockedCards(previewed, true)
-	for _, c := range previewed {
-		if paid := c.ID == "paid"; c.Locked != paid || (paid && (c.Front != "" || c.Back != "")) || (!paid && (c.Front == "" || c.Back == "")) {
-			t.Errorf("preview %q: %+v", c.ID, c)
-		}
+	tests := []struct {
+		tier   models.Tier
+		locked map[string]bool
+	}{
+		{models.TierFree, map[string]bool{"plus": true, "premium": true}},
+		{models.TierPlus, map[string]bool{"premium": true}},
+		{models.TierPremium, map[string]bool{"plus": true}},
+		{models.TierUltra, map[string]bool{}},
 	}
-
-	full := cards()
-	markLockedCards(full, false)
-	for _, c := range full {
-		if c.Locked || c.Front == "" || c.Back == "" {
-			t.Errorf("full access %q must be untouched: %+v", c.ID, c)
+	for _, tc := range tests {
+		got := cards()
+		markLockedCards(got, tc.tier)
+		for _, c := range got {
+			locked := tc.locked[c.ID]
+			if c.Locked != locked || (locked && (c.Front != "" || c.Back != "")) || (!locked && (c.Front == "" || c.Back == "")) {
+				t.Errorf("%s %q: %+v", tc.tier, c.ID, c)
+			}
 		}
 	}
 }

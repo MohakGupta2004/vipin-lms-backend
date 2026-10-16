@@ -51,41 +51,44 @@ type UpdateLessonInput struct {
 // admin whose id is the course's instructor_id), a user with a valid enrollment, or any logged-in user
 // when the published course is free. isTeacher is true for the owner.
 func authorizeCourse(ctx context.Context, repo *models.LessonRepository, user *models.User, courseID string) (isTeacher bool, err error) {
-	isTeacher, preview, err := authorizePreview(ctx, repo, user, courseID)
+	isTeacher, tier, err := authorizeTier(ctx, repo, user, courseID)
 	if err != nil {
 		return false, err
 	}
-	if preview {
+	if tier == models.TierFree {
 		return false, ErrForbidden
 	}
 	return isTeacher, nil
 }
 
-// authorizePreview is authorizeCourse with a fallback: a user who may not read the whole course can
-// still preview it (preview = true) when it is published. Previewers only get free content: free
-// lessons, plus the notes, quizzes and videos marked free on their own (a free lesson does not
-// unlock them).
-func authorizePreview(ctx context.Context, repo *models.LessonRepository, user *models.User, courseID string) (isTeacher, preview bool, err error) {
+// authorizeTier tells which tier a user has in a course: the owner and anyone in a free course get
+// ultra, an enrolled student gets the tier on their enrollment, and any other user may preview a
+// published course as free. Free users only open the free lessons, plus the notes, quizzes,
+// flashcards and videos tagged free on their own (a free lesson does not unlock them). Items
+// tagged for other tiers are opened with models.CanAccess.
+func authorizeTier(ctx context.Context, repo *models.LessonRepository, user *models.User, courseID string) (isTeacher bool, tier models.Tier, err error) {
 	if !uuidPattern.MatchString(courseID) {
-		return false, false, ErrCourseNotFound
+		return false, "", ErrCourseNotFound
 	}
 	access, err := repo.CourseAccess(ctx, courseID, user.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, false, ErrCourseNotFound
+		return false, "", ErrCourseNotFound
 	}
 	if err != nil {
-		return false, false, err
+		return false, "", err
 	}
 	isTeacher = access.IsInstructor && user.CanTeach()
 	switch {
-	case isTeacher || access.IsEnrolled:
-		return isTeacher, false, nil
+	case isTeacher:
+		return true, models.TierUltra, nil
+	case access.EnrolledTier != "":
+		return false, access.EnrolledTier, nil
 	case access.Published && access.Free:
-		return false, false, nil // a free course is open to every logged-in user
+		return false, models.TierUltra, nil // a free course is open to every logged-in user
 	case access.Published:
-		return false, true, nil
+		return false, models.TierFree, nil
 	default:
-		return false, false, ErrForbidden
+		return false, "", ErrForbidden
 	}
 }
 
@@ -132,10 +135,11 @@ func (s *LessonService) CreateLesson(ctx context.Context, user *models.User, cou
 // they are not enrolled in see every published lesson and note; paid lessons and the notes they
 // cannot open come back with locked set.
 func (s *LessonService) ListLessons(ctx context.Context, user *models.User, courseID string) ([]models.Lesson, error) {
-	isTeacher, preview, err := authorizePreview(ctx, s.lessonRepo, user, courseID)
+	isTeacher, tier, err := authorizeTier(ctx, s.lessonRepo, user, courseID)
 	if err != nil {
 		return nil, err
 	}
+	preview := tier == models.TierFree
 
 	lessons, err := s.lessonRepo.ListLessons(ctx, courseID, isTeacher)
 	if err != nil {
@@ -145,7 +149,7 @@ func (s *LessonService) ListLessons(ctx context.Context, user *models.User, cour
 	if err != nil {
 		return nil, err
 	}
-	markLockedNotes(notes, preview)
+	markLockedNotes(notes, tier)
 
 	notesByLesson := map[string][]models.Note{}
 	for _, n := range notes {

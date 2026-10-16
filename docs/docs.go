@@ -1379,7 +1379,7 @@ const docTemplate = `{
         },
         "/courses/{id}/videos": {
             "get": {
-                "description": "Owner sees every video. Students see ready videos of published lessons. Users previewing a published course they are not enrolled in see them too, with locked=true on the ones they cannot stream.",
+                "description": "Owner sees every video. Students see ready videos of published lessons. Users not enrolled, or enrolled on a lower tier, see them too, with locked=true on the ones their tier cannot stream.",
                 "produces": [
                     "application/json"
                 ],
@@ -1394,6 +1394,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only videos of this kind: offline or meet",
+                        "name": "kind",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1521,7 +1527,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Admin only. Enrolls a student in a published course for a number of months (1 to 60). The expiry date is calculated by the server.",
+                "description": "Admin only. Enrolls a student in a published course for a number of months (1 to 60) on a tier (plus, premium or ultra). The expiry date is calculated by the server.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1597,7 +1603,7 @@ const docTemplate = `{
         },
         "/enrollments/{id}": {
             "patch": {
-                "description": "Admin only. For example set an enrollment to cancelled.",
+                "description": "Admin only. For example set an enrollment to cancelled, or move it to another tier. Only the fields that are sent change.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1607,7 +1613,7 @@ const docTemplate = `{
                 "tags": [
                     "enrollments"
                 ],
-                "summary": "Change enrollment status",
+                "summary": "Change an enrollment's status or tier",
                 "parameters": [
                     {
                         "type": "string",
@@ -1617,12 +1623,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "New status",
+                        "description": "Fields to change",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handlers.UpdateEnrollmentStatusRequest"
+                            "$ref": "#/definitions/handlers.UpdateEnrollmentRequest"
                         }
                     }
                 ],
@@ -1646,7 +1652,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Malformed payload or invalid status",
+                        "description": "Malformed payload, invalid status or tier, or nothing to change",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -1873,7 +1879,7 @@ const docTemplate = `{
         },
         "/flashcard-decks/{id}/cards": {
             "get": {
-                "description": "Cards in order, each with the user's own rating. A user previewing the course (not enrolled in a paid course) gets the paid cards with locked true and front and back blank.",
+                "description": "Cards in order, each with the user's own rating. Cards the user's tier cannot study come back with locked true and front and back blank.",
                 "produces": [
                     "application/json"
                 ],
@@ -2016,7 +2022,7 @@ const docTemplate = `{
         },
         "/flashcard-decks/{id}/free": {
             "put": {
-                "description": "Course owner only. Sets isFree on all the deck's cards at once; free cards can be studied by users previewing the course.",
+                "description": "Deprecated, use PUT /flashcard-decks/{id}/tiers. Course owner only. true gives all the deck's cards the free tier, false the default paid tiers.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2027,6 +2033,7 @@ const docTemplate = `{
                     "flashcards"
                 ],
                 "summary": "Make every card of a deck free or paid",
+                "deprecated": true,
                 "parameters": [
                     {
                         "type": "string",
@@ -2099,7 +2106,7 @@ const docTemplate = `{
         },
         "/flashcard-decks/{id}/session": {
             "get": {
-                "description": "Distinct cards of the deck in random order; cards rated low by the user come up more often. Users previewing the course only get the free cards.",
+                "description": "Distinct cards of the deck in random order; cards rated low by the user come up more often. Only cards the user's tier can study are included.",
                 "produces": [
                     "application/json"
                 ],
@@ -2158,6 +2165,89 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Deck not found, or not visible to this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/flashcard-decks/{id}/tiers": {
+            "put": {
+                "description": "Course owner only. Gives all the deck's cards the same tiers at once (free, plus, premium; ultra is always included). Cards tagged free can be studied by users who are not enrolled.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "flashcards"
+                ],
+                "summary": "Set the tiers of every card of a deck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Tiers",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SetDeckTiersRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deck updated",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.FlashcardDeck"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or unknown tier",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not the course owner",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Deck not found",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -2554,7 +2644,7 @@ const docTemplate = `{
         },
         "/lessons/{id}/notes": {
             "post": {
-                "description": "Course owner (instructor or admin) uploads a PDF note to a lesson of their course. Max 25 MB. isFree lets users previewing the course open it even when its lesson is paid.",
+                "description": "Course owner (instructor or admin) uploads a PDF note to a lesson of their course. Max 25 MB. tiers lists who can open it (default plus and premium; ultra always can); free lets users who are not enrolled open it too, even when its lesson is paid.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -2587,8 +2677,18 @@ const docTemplate = `{
                         "in": "formData"
                     },
                     {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Tiers that can open the note: free, plus, premium (repeat the field). Default plus and premium; ultra is always included",
+                        "name": "tiers",
+                        "in": "formData"
+                    },
+                    {
                         "type": "boolean",
-                        "description": "Free preview: open without enrolling (default false)",
+                        "description": "Deprecated: true is the same as tiers=free",
                         "name": "isFree",
                         "in": "formData"
                     },
@@ -2660,7 +2760,7 @@ const docTemplate = `{
         },
         "/lessons/{id}/quizzes": {
             "get": {
-                "description": "Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users previewing a published course see them too, with locked set on those not marked free (a free lesson does not unlock its quizzes). Filter with ?type=mock_test or ?type=practice.",
+                "description": "Returns the quizzes of a lesson without their questions. The course instructor and enrolled students can see them; students see published quizzes only. Users not enrolled, or enrolled on a lower tier, see them too, with locked set on those their tier cannot open (a free lesson does not unlock its quizzes). Filter with ?type=mock_test or ?type=practice.",
                 "produces": [
                     "application/json"
                 ],
@@ -2821,7 +2921,7 @@ const docTemplate = `{
         },
         "/lessons/{id}/videos": {
             "get": {
-                "description": "Owner sees every video. Students see ready videos of published lessons. Users previewing a published course they are not enrolled in see them too, with locked=true on the ones they cannot stream.",
+                "description": "Owner sees every video. Students see ready videos of published lessons. Users not enrolled, or enrolled on a lower tier, see them too, with locked=true on the ones their tier cannot stream.",
                 "produces": [
                     "application/json"
                 ],
@@ -2836,6 +2936,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only videos of this kind: offline or meet",
+                        "name": "kind",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2898,7 +3004,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "File name, optional description, and whether the video is free to watch",
+                        "description": "File name, optional description, kind (offline or meet) and the tiers that can watch it",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -3412,7 +3518,7 @@ const docTemplate = `{
                 }
             },
             "patch": {
-                "description": "Course owner (instructor or admin) edits a note's title, description, or whether it is free. Free notes open for users previewing the course without enrolling. Only the fields that are sent change; the PDF itself cannot be replaced.",
+                "description": "Course owner (instructor or admin) edits a note's title, description, or the tiers that can open it (free, plus, premium; ultra always can). Free notes open for users who are not enrolled. Only the fields that are sent change; the PDF itself cannot be replaced.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4497,7 +4603,7 @@ const docTemplate = `{
                 }
             },
             "patch": {
-                "description": "The uploader (who must still own the course) changes the title or the description students see under the player. Omitted fields are left as they are; an empty description removes it.",
+                "description": "The uploader (who must still own the course) changes the title, the description students see under the player, the section (kind: offline or meet) or the tiers that can watch it. Omitted fields are left as they are; an empty description removes it.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4507,7 +4613,7 @@ const docTemplate = `{
                 "tags": [
                     "videos"
                 ],
-                "summary": "Edit a video's title and description",
+                "summary": "Edit a video's details, section and access",
                 "parameters": [
                     {
                         "type": "string",
@@ -5113,6 +5219,10 @@ const docTemplate = `{
                     "description": "how long the enrollment lasts, like 3",
                     "type": "integer"
                 },
+                "tier": {
+                    "description": "plus, premium or ultra",
+                    "type": "string"
+                },
                 "userId": {
                     "type": "string"
                 }
@@ -5128,7 +5238,15 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
+                    "description": "deprecated: use tiers",
                     "type": "boolean"
+                },
+                "tiers": {
+                    "description": "free, plus, premium; defaults to plus and premium; ultra is always included",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -5204,6 +5322,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
+                    "description": "deprecated: use tiers",
                     "type": "boolean"
                 },
                 "passPercent": {
@@ -5219,6 +5338,13 @@ const docTemplate = `{
                 "status": {
                     "description": "draft or published, defaults to published",
                     "type": "string"
+                },
+                "tiers": {
+                    "description": "free, plus, premium; defaults to plus and premium; ultra is always included",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "timeLimitSec": {
                     "description": "mock_test only; omit for an untimed quiz",
@@ -5300,6 +5426,17 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.SetDeckTiersRequest": {
+            "type": "object",
+            "properties": {
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "handlers.SubmitAnswerRequest": {
             "type": "object",
             "properties": {
@@ -5363,11 +5500,15 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.UpdateEnrollmentStatusRequest": {
+        "handlers.UpdateEnrollmentRequest": {
             "type": "object",
             "properties": {
                 "status": {
                     "description": "active, completed, expired or cancelled",
+                    "type": "string"
+                },
+                "tier": {
+                    "description": "plus, premium or ultra",
                     "type": "string"
                 }
             }
@@ -5382,7 +5523,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
+                    "description": "deprecated: use tiers",
                     "type": "boolean"
+                },
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -5410,8 +5558,15 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
-                    "description": "open to users previewing the course",
+                    "description": "deprecated: use tiers",
                     "type": "boolean"
+                },
+                "tiers": {
+                    "description": "free, plus, premium; ultra is always included",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "title": {
                     "type": "string"
@@ -5425,6 +5580,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
+                    "description": "deprecated: use tiers",
                     "type": "boolean"
                 },
                 "passPercent": {
@@ -5438,6 +5594,12 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "timeLimitSec": {
                     "type": "integer"
@@ -5573,7 +5735,19 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
+                    "description": "deprecated: true is the same as tiers [free]",
                     "type": "boolean"
+                },
+                "kind": {
+                    "description": "offline (default) or meet",
+                    "type": "string"
+                },
+                "tiers": {
+                    "description": "free, plus, premium; defaults by kind; ultra is always included",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -5602,6 +5776,21 @@ const docTemplate = `{
             "properties": {
                 "description": {
                     "type": "string"
+                },
+                "isFree": {
+                    "description": "deprecated: use tiers",
+                    "type": "boolean"
+                },
+                "kind": {
+                    "description": "offline or meet",
+                    "type": "string"
+                },
+                "tiers": {
+                    "description": "free, plus, premium; ultra is always included",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "title": {
                     "type": "string"
@@ -5687,6 +5876,14 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "tier": {
+                    "description": "Tier is also only filled in by GET /courses/{id}: free, plus, premium or ultra. The owner and\nanyone in a free course are ultra; an enrolled student has the tier of their enrollment.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.Tier"
+                        }
+                    ]
+                },
                 "title": {
                     "type": "string"
                 },
@@ -5728,6 +5925,14 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "tier": {
+                    "description": "Tier is also only filled in by GET /courses/{id}: free, plus, premium or ultra. The owner and\nanyone in a free course are ultra; an enrolled student has the tier of their enrollment.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.Tier"
+                        }
+                    ]
                 },
                 "title": {
                     "type": "string"
@@ -5809,6 +6014,14 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "tier": {
+                    "description": "plus, premium or ultra: how much of the course the student can open",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.Tier"
+                        }
+                    ]
+                },
                 "userId": {
                     "type": "string"
                 }
@@ -5850,6 +6063,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
+                    "description": "read-only: free is in Tiers",
                     "type": "boolean"
                 },
                 "locked": {
@@ -5862,12 +6076,23 @@ const docTemplate = `{
                 },
                 "position": {
                     "type": "integer"
+                },
+                "tiers": {
+                    "description": "tiers that can study the card; ultra is implied",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
         "models.FlashcardDeck": {
             "type": "object",
             "properties": {
+                "accessibleCardCount": {
+                    "description": "AccessibleCardCount is how many cards the asking user's tier can study; Locked is set when there are\ncards but none of them is open to that user.",
+                    "type": "integer"
+                },
                 "cardCount": {
                     "type": "integer"
                 },
@@ -5889,6 +6114,9 @@ const docTemplate = `{
                 },
                 "lessonTitle": {
                     "type": "string"
+                },
+                "locked": {
+                    "type": "boolean"
                 },
                 "myMastered": {
                     "description": "cards rated 4 or 5",
@@ -6000,6 +6228,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
+                    "description": "read-only: free is in Tiers",
                     "type": "boolean"
                 },
                 "lastAttemptAt": {
@@ -6034,6 +6263,13 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "tiers": {
+                    "description": "tiers that can open the quiz; ultra is implied",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "timeLimitSec": {
                     "description": "nil = untimed",
@@ -6073,6 +6309,9 @@ const docTemplate = `{
                 "isFree": {
                     "type": "boolean"
                 },
+                "kind": {
+                    "type": "string"
+                },
                 "lessonId": {
                     "type": "string"
                 },
@@ -6096,6 +6335,13 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "tiers": {
+                    "description": "Tiers lists the tiers that can stream the video; ultra is implied. IsFree is read-only: free is in Tiers.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "title": {
                     "type": "string"
@@ -6124,7 +6370,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
-                    "description": "open to users previewing the course; a free lesson does not make its notes free",
                     "type": "boolean"
                 },
                 "lessonId": {
@@ -6136,6 +6381,13 @@ const docTemplate = `{
                 },
                 "sizeBytes": {
                     "type": "integer"
+                },
+                "tiers": {
+                    "description": "Tiers lists the tiers that can open the note; ultra is implied. IsFree is read-only: free is in Tiers.\nA free lesson does not make its notes free.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "title": {
                     "type": "string"
@@ -6239,6 +6491,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "isFree": {
+                    "description": "read-only: free is in Tiers",
                     "type": "boolean"
                 },
                 "lessonId": {
@@ -6263,6 +6516,13 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "tiers": {
+                    "description": "tiers that can open the quiz; ultra is implied",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "timeLimitSec": {
                     "description": "nil = untimed",
@@ -6326,6 +6586,21 @@ const docTemplate = `{
                 "RoleStudent",
                 "RoleInstructor",
                 "RoleAdmin"
+            ]
+        },
+        "models.Tier": {
+            "type": "string",
+            "enum": [
+                "free",
+                "plus",
+                "premium",
+                "ultra"
+            ],
+            "x-enum-varnames": [
+                "TierFree",
+                "TierPlus",
+                "TierPremium",
+                "TierUltra"
             ]
         },
         "models.User": {
@@ -6401,6 +6676,9 @@ const docTemplate = `{
                 "isFree": {
                     "type": "boolean"
                 },
+                "kind": {
+                    "type": "string"
+                },
                 "lessonId": {
                     "type": "string"
                 },
@@ -6421,6 +6699,13 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "tiers": {
+                    "description": "Tiers lists the tiers that can stream the video; ultra is implied. IsFree is read-only: free is in Tiers.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "title": {
                     "type": "string"

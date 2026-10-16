@@ -240,6 +240,7 @@ func main() {
 	mux.Handle("GET /api/v1/courses/{id}/flashcard-decks", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.ListCourseDecks)))
 	mux.Handle("POST /api/v1/courses/{id}/flashcard-decks", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.CreateDeck)))
 	mux.Handle("PATCH /api/v1/flashcard-decks/{id}", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.UpdateDeckStatus)))
+	mux.Handle("PUT /api/v1/flashcard-decks/{id}/tiers", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.SetDeckTiers)))
 	mux.Handle("PUT /api/v1/flashcard-decks/{id}/free", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.SetDeckFree)))
 	mux.Handle("DELETE /api/v1/flashcard-decks/{id}", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.DeleteDeck)))
 	mux.Handle("GET /api/v1/flashcard-decks/{id}/cards", authMiddleware.RequireAuth(http.HandlerFunc(flashcardHandler.ListDeckCards)))

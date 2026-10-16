@@ -19,10 +19,13 @@ type CreateEnrollmentRequest struct {
 	UserID   string `json:"userId"`
 	CourseID string `json:"courseId"`
 	Months   int    `json:"months"` // how long the enrollment lasts, like 3
+	Tier     string `json:"tier"`   // plus, premium or ultra
 }
 
-type UpdateEnrollmentStatusRequest struct {
-	Status string `json:"status"` // active, completed, expired or cancelled
+// UpdateEnrollmentRequest changes only the fields that are sent.
+type UpdateEnrollmentRequest struct {
+	Status *string `json:"status"` // active, completed, expired or cancelled
+	Tier   *string `json:"tier"`   // plus, premium or ultra
 }
 
 type EnrollmentHandler struct {
@@ -38,7 +41,7 @@ func NewEnrollmentHandler(enrollmentService *service.EnrollmentService) *Enrollm
 // CreateEnrollment godoc
 //
 //	@Summary		Enroll a student
-//	@Description	Admin only. Enrolls a student in a published course for a number of months (1 to 60). The expiry date is calculated by the server.
+//	@Description	Admin only. Enrolls a student in a published course for a number of months (1 to 60) on a tier (plus, premium or ultra). The expiry date is calculated by the server.
 //	@Tags			enrollments
 //	@Accept			json
 //	@Produce		json
@@ -68,6 +71,7 @@ func (h *EnrollmentHandler) CreateEnrollment(w http.ResponseWriter, r *http.Requ
 		UserID:   req.UserID,
 		CourseID: req.CourseID,
 		Months:   req.Months,
+		Tier:     req.Tier,
 	})
 	if err != nil {
 		writeServiceError(w, err)
@@ -121,15 +125,15 @@ func (h *EnrollmentHandler) ListEnrollments(w http.ResponseWriter, r *http.Reque
 
 // UpdateEnrollmentStatus godoc
 //
-//	@Summary		Change enrollment status
-//	@Description	Admin only. For example set an enrollment to cancelled.
+//	@Summary		Change an enrollment's status or tier
+//	@Description	Admin only. For example set an enrollment to cancelled, or move it to another tier. Only the fields that are sent change.
 //	@Tags			enrollments
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string										true	"Enrollment ID"
-//	@Param			request	body		UpdateEnrollmentStatusRequest				true	"New status"
+//	@Param			request	body		UpdateEnrollmentRequest						true	"Fields to change"
 //	@Success		200		{object}	utils.JSONResponse{data=models.Enrollment}	"Enrollment updated"
-//	@Failure		400		{object}	utils.JSONResponse							"Malformed payload or invalid status"
+//	@Failure		400		{object}	utils.JSONResponse							"Malformed payload, invalid status or tier, or nothing to change"
 //	@Failure		401		{object}	utils.JSONResponse							"Not logged in"
 //	@Failure		403		{object}	utils.JSONResponse							"Not an admin"
 //	@Failure		404		{object}	utils.JSONResponse							"Enrollment not found"
@@ -143,13 +147,13 @@ func (h *EnrollmentHandler) UpdateEnrollmentStatus(w http.ResponseWriter, r *htt
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxEnrollmentBodyBytes)
-	var req UpdateEnrollmentStatusRequest
+	var req UpdateEnrollmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
 		return
 	}
 
-	enrollment, err := h.enrollmentService.UpdateEnrollmentStatus(r.Context(), user, r.PathValue("id"), req.Status)
+	enrollment, err := h.enrollmentService.UpdateEnrollment(r.Context(), user, r.PathValue("id"), service.UpdateEnrollmentInput{Status: req.Status, Tier: req.Tier})
 	if err != nil {
 		writeServiceError(w, err)
 		return
