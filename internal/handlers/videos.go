@@ -190,6 +190,34 @@ func (h *VideoHandler) GetVideo(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusOK, VideoResponse{Video: video})
 }
 
+// DeleteVideo godoc
+//
+//	@Summary		Delete a video
+//	@Description	The uploader (who must still own the course) deletes a video. Students' progress on it goes too, and its files are removed from storage. A video that is still processing can't be deleted until it is ready or has failed.
+//	@Tags			videos
+//	@Produce		json
+//	@Param			id	path		string				true	"Video ID"
+//	@Success		200	{object}	utils.JSONResponse	"Video deleted"
+//	@Failure		401	{object}	utils.JSONResponse	"Not logged in"
+//	@Failure		403	{object}	utils.JSONResponse	"Not an instructor"
+//	@Failure		404	{object}	utils.JSONResponse	"Video not found"
+//	@Failure		409	{object}	utils.JSONResponse	"Video is still processing"
+//	@Failure		500	{object}	utils.JSONResponse	"Internal server error"
+//	@Failure		503	{object}	utils.JSONResponse	"Video storage is disabled"
+//	@Router			/videos/{id} [delete]
+func (h *VideoHandler) DeleteVideo(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+	if err := h.videoService.DeleteVideo(r.Context(), user, r.PathValue("id")); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, "video deleted")
+}
+
 // UpdateVideo godoc
 //
 //	@Summary		Edit a video's details, section and access

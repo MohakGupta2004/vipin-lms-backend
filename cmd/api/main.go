@@ -216,6 +216,7 @@ func main() {
 	mux.Handle("POST /api/v1/videos/{id}/retry", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.RetryTranscode)))
 	mux.Handle("GET /api/v1/videos/{id}", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.GetVideo)))
 	mux.Handle("PATCH /api/v1/videos/{id}", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.UpdateVideo)))
+	mux.Handle("DELETE /api/v1/videos/{id}", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.DeleteVideo)))
 	// playback: signed CDN URL + video lists for owners and students
 	mux.Handle("GET /api/v1/videos/{id}/stream", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.StreamVideo)))
 	mux.Handle("PUT /api/v1/videos/{id}/progress", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.SaveVideoProgress)))

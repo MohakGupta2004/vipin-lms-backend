@@ -207,6 +207,22 @@ func (r *VideoRepository) ListProcessingIDs(ctx context.Context) ([]string, erro
 	return ids, rows.Err()
 }
 
+// Delete removes a video row; its progress and shares go with it (ON DELETE CASCADE). It returns sql.ErrNoRows
+// if the video does not exist, and leaves a video that is transcoding alone (busy = true) so a running job
+// never writes into a deleted video's folder.
+func (r *VideoRepository) Delete(ctx context.Context, id string) (busy bool, err error) {
+	var status string
+	err = r.db.QueryRowContext(ctx, `DELETE FROM videos WHERE id = $1 AND status <> 'processing' RETURNING status`, id).Scan(&status)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	// Nothing deleted: either the video is gone or it is processing.
+	if err := r.db.QueryRowContext(ctx, `SELECT status FROM videos WHERE id = $1`, id).Scan(&status); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // mustAffect runs an UPDATE and returns sql.ErrNoRows if it matched no row.
 func (r *VideoRepository) mustAffect(ctx context.Context, query string, args ...any) error {
 	res, err := r.db.ExecContext(ctx, query, args...)

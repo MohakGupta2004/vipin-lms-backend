@@ -159,7 +159,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled), errors.Is(err, service.ErrQuizHasAttempts), errors.Is(err, service.ErrDeckExists),
 		errors.Is(err, service.ErrVideoNotAwaitingUpload),
 		errors.Is(err, service.ErrVideoNotFailed),
-		errors.Is(err, service.ErrVideoNotReady):
+		errors.Is(err, service.ErrVideoNotReady),
+		errors.Is(err, service.ErrVideoProcessing):
 		utils.WriteJSONResponse(w, http.StatusConflict, err.Error())
 	case errors.Is(err, service.ErrStorageDisabled), errors.Is(err, service.ErrTranscodeQueueBusy):
 		utils.WriteJSONResponse(w, http.StatusServiceUnavailable, err.Error())

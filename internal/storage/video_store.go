@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gcs "cloud.google.com/go/storage"
+	"google.golang.org/api/iterator"
 )
 
 const (
@@ -50,6 +51,8 @@ type VideoStore interface {
 	ReadSmallObject(ctx context.Context, object string, maxBytes int64) ([]byte, error)
 	// URI returns the gs://bucket/object address of an object.
 	URI(object string) string
+	// DeletePrefix removes every object whose name starts with prefix. Nothing to delete is not an error.
+	DeletePrefix(ctx context.Context, prefix string) error
 	Close() error
 }
 
@@ -130,6 +133,27 @@ func (s *GCSVideoStore) URI(object string) string {
 	return fmt.Sprintf("gs://%s/%s", s.bucket, object)
 }
 
+func (s *GCSVideoStore) DeletePrefix(ctx context.Context, prefix string) error {
+	// An empty prefix would match the whole bucket.
+	if strings.Trim(prefix, "/") == "" {
+		return errors.New("storage: refusing to delete an empty prefix")
+	}
+	bucket := s.client.Bucket(s.bucket)
+	it := bucket.Objects(ctx, &gcs.Query{Prefix: prefix})
+	for {
+		attrs, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("storage: list objects: %w", err)
+		}
+		if err := bucket.Object(attrs.Name).Delete(ctx); err != nil && !errors.Is(err, gcs.ErrObjectNotExist) {
+			return fmt.Errorf("storage: delete object %s: %w", attrs.Name, err)
+		}
+	}
+}
+
 func (s *GCSVideoStore) Close() error { return s.client.Close() }
 
 // DisabledVideoStore is used when GCS_ENABLE is not true. It never touches the network.
@@ -152,5 +176,7 @@ func (DisabledVideoStore) ReadSmallObject(context.Context, string, int64) ([]byt
 }
 
 func (DisabledVideoStore) URI(string) string { return "" }
+
+func (DisabledVideoStore) DeletePrefix(context.Context, string) error { return ErrStorageDisabled }
 
 func (DisabledVideoStore) Close() error { return nil }

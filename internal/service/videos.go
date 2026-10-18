@@ -31,6 +31,8 @@ const (
 	maxPlaylistBytes = 1 << 20
 	// maxVideoPositionSec caps a saved playback position (24 hours), since video durations are not stored yet.
 	maxVideoPositionSec = 24 * 60 * 60
+	// videoCleanupTimeout bounds removing a deleted video's files: one source file plus every HLS segment.
+	videoCleanupTimeout = 2 * time.Minute
 )
 
 // playlistNamePattern is a playlist file directly inside a video's hls/ folder, e.g. "media-sd.m3u8".
@@ -43,6 +45,8 @@ var (
 	ErrVideoNotAwaitingUpload = errors.New("video is not awaiting upload")
 	// ErrVideoNotFailed means only a failed video can be retried.
 	ErrVideoNotFailed = errors.New("only a failed video can be retried")
+	// ErrVideoProcessing means the video is being transcoded and can't be deleted until that ends.
+	ErrVideoProcessing = errors.New("video is still processing; delete it once it is ready or has failed")
 	// ErrVideoNotReady means the owner asked to stream a video that has not finished transcoding.
 	ErrVideoNotReady = errors.New("video is not ready to stream yet")
 	// ErrBadStreamSignature means a playlist request has a missing, tampered or expired signature.
@@ -295,6 +299,43 @@ func (s *VideoService) UpdateVideo(ctx context.Context, user *models.User, video
 		return nil, err
 	}
 	return video, nil
+}
+
+// DeleteVideo lets the person who uploaded a video (and still owns its course) delete it: the row goes at once,
+// then the source file and HLS folder are removed from the bucket in the background. A video that is still
+// transcoding can't be deleted, so the job never writes into a deleted folder.
+func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, videoID string) error {
+	video, err := s.ownedVideo(ctx, user, videoID)
+	if err != nil {
+		return err
+	}
+	// Deleting the row while storage is off would leave the files behind forever.
+	if !s.store.Enabled() {
+		return ErrStorageDisabled
+	}
+	busy, err := s.videoRepo.Delete(ctx, video.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrVideoNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if busy {
+		return ErrVideoProcessing
+	}
+	// Everything of a video lives under its own folder: courses/{course}/videos/{video}/ (source + hls/).
+	go deleteVideoFiles(s.store, path.Dir(video.OriginalKey)+"/")
+	return nil
+}
+
+// deleteVideoFiles removes a deleted video's folder on a best-effort basis; a failure only leaves orphan files.
+// It uses a fresh context because the request is over by the time it runs.
+func deleteVideoFiles(store storage.VideoStore, prefix string) {
+	ctx, cancel := context.WithTimeout(context.Background(), videoCleanupTimeout)
+	defer cancel()
+	if err := store.DeletePrefix(ctx, prefix); err != nil {
+		slog.Error("failed to delete stored video files", "prefix", prefix, "err", err)
+	}
 }
 
 // GetVideo returns a video to the person who uploaded it, if they still own its course.
