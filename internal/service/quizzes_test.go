@@ -115,12 +115,21 @@ func TestSelectAnswers(t *testing.T) {
 	}
 }
 
-func TestMockResultHasMarksOnly(t *testing.T) {
+func TestMockResultHasMarksAndAnswers(t *testing.T) {
 	quiz := &models.Quiz{ID: "z", Type: models.QuizTypeMockTest, PassPercent: intPtr(50)}
-	a := gradeAttempt(quiz, gradingFixture(), map[string]string{"q1": "b1", "q2": "b2"})
+	a := gradeAttempt(quiz, gradingFixture(), map[string]string{"q1": "b1"})
 	a.ID = "att"
 	r := mockResult(quiz, a)
 	if r.AttemptID != "att" || r.Score != 1 || r.Total != 2 || !r.Passed || r.PassPercent != 50 {
 		t.Errorf("bad result: %+v", r)
+	}
+	if len(r.Answers) != 2 {
+		t.Fatalf("answers = %d, want every question", len(r.Answers))
+	}
+	if got := r.Answers[0]; !got.IsCorrect || got.CorrectOptionID != "b1" || got.Explanation != "e1" {
+		t.Errorf("answered question: %+v", got)
+	}
+	if got := r.Answers[1]; got.SelectedOptionID != nil || got.IsCorrect || got.CorrectOptionID != "a2" || got.Explanation != "e2" {
+		t.Errorf("skipped question: %+v", got)
 	}
 }

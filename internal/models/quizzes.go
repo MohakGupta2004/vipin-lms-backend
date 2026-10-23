@@ -11,7 +11,8 @@ import (
 var ErrQuizHasAttempts = errors.New("this quiz already has attempts, so its questions or type cannot be changed; create a new quiz instead")
 
 const (
-	// QuizTypeMockTest is timed (optionally) and scored, with a pass mark. Students only ever see their marks.
+	// QuizTypeMockTest is timed (optionally) and scored, with a pass mark. Answers and explanations are
+	// revealed only once the test is submitted.
 	QuizTypeMockTest = "mock_test"
 	// QuizTypePractice is untimed and unscored; each answer and its explanation is revealed as soon as it is given.
 	QuizTypePractice = "practice"
@@ -70,16 +71,17 @@ type QuizAttempt struct {
 	Answers     []AttemptAnswer `json:"answers,omitempty"`
 }
 
-// MockResult is what a student gets back after submitting a mock test: the marks and nothing else,
-// so the correct answers stay hidden like in a real exam.
+// MockResult is what a student gets back after submitting a mock test: the marks, and every question
+// graded with the correct option and explanation for the review. Skipped questions have a nil selectedOptionId.
 type MockResult struct {
-	AttemptID   string    `json:"attemptId"`
-	QuizID      string    `json:"quizId"`
-	Score       int       `json:"score"`
-	Total       int       `json:"total"`
-	Passed      bool      `json:"passed"`
-	PassPercent int       `json:"passPercent"`
-	SubmittedAt time.Time `json:"submittedAt"`
+	AttemptID   string          `json:"attemptId"`
+	QuizID      string          `json:"quizId"`
+	Score       int             `json:"score"`
+	Total       int             `json:"total"`
+	Passed      bool            `json:"passed"`
+	PassPercent int             `json:"passPercent"`
+	SubmittedAt time.Time       `json:"submittedAt"`
+	Answers     []AttemptAnswer `json:"answers"`
 }
 
 // AttemptAnswer is the student's answer to one question, with the correct answer revealed.

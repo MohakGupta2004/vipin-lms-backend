@@ -452,8 +452,8 @@ func (s *QuizService) GetQuiz(ctx context.Context, user *models.User, quizID str
 
 // SubmitAttempt saves a finished practice session: the student sends every question they answered
 // in one go and gets them graded back, with the correct options and explanations, for the review
-// page. Questions left out are not graded. Mock tests are refused here so their answers stay hidden;
-// they go through SubmitMockTest.
+// page. Questions left out are not graded. Mock tests are refused here; they go through SubmitMockTest,
+// which grades every question, answered or not.
 func (s *QuizService) SubmitAttempt(ctx context.Context, user *models.User, quizID string, answers []SubmitAnswerInput) (*models.QuizAttempt, error) {
 	quiz, questions, selected, err := s.loadAnswers(ctx, user, quizID, answers)
 	if err != nil {
@@ -491,7 +491,8 @@ func (s *QuizService) CheckAnswer(ctx context.Context, user *models.User, quizID
 }
 
 // SubmitMockTest grades a mock test in one go and saves the attempt. Questions left out count as
-// skipped (wrong). Like a real exam, only the marks come back: no correct options or explanations.
+// skipped (wrong). The marks come back with every question graded, its correct option and explanation,
+// so the student can review the test once it is over.
 func (s *QuizService) SubmitMockTest(ctx context.Context, user *models.User, quizID string, answers []SubmitAnswerInput) (*models.MockResult, error) {
 	quiz, questions, selected, err := s.loadAnswers(ctx, user, quizID, answers)
 	if err != nil {
@@ -510,7 +511,7 @@ func (s *QuizService) SubmitMockTest(ctx context.Context, user *models.User, qui
 	return mockResult(quiz, attempt), nil
 }
 
-// mockResult keeps only the marks of a graded mock test attempt.
+// mockResult turns a graded mock test attempt into the student's result.
 func mockResult(quiz *models.Quiz, a *models.QuizAttempt) *models.MockResult {
 	return &models.MockResult{
 		AttemptID:   a.ID,
@@ -520,6 +521,7 @@ func mockResult(quiz *models.Quiz, a *models.QuizAttempt) *models.MockResult {
 		Passed:      *a.Passed,
 		PassPercent: *quiz.PassPercent,
 		SubmittedAt: a.SubmittedAt,
+		Answers:     a.Answers,
 	}
 }
 
@@ -580,8 +582,8 @@ func selectAnswers(questions []models.Question, answers []SubmitAnswerInput) (ma
 	return selected, nil
 }
 
-// ListAttempts returns the student's own past attempts at a quiz, newest first. Practice sessions
-// come with their graded answers and explanations; mock tests with their marks only.
+// ListAttempts returns the student's own past attempts at a quiz, newest first, each with its graded
+// answers and explanations. A mock test attempt also has its marks and every question, skipped ones included.
 func (s *QuizService) ListAttempts(ctx context.Context, user *models.User, quizID string) ([]models.QuizAttempt, error) {
 	if user.Role != models.RoleStudent {
 		return nil, ErrForbidden
@@ -590,14 +592,7 @@ func (s *QuizService) ListAttempts(ctx context.Context, user *models.User, quizI
 	if err != nil {
 		return nil, err
 	}
-	attempts, err := s.quizRepo.ListAttempts(ctx, quiz.ID, user.ID)
-	if err != nil || quiz.Type == models.QuizTypePractice {
-		return attempts, err
-	}
-	for i := range attempts {
-		attempts[i].Answers = nil
-	}
-	return attempts, nil
+	return s.quizRepo.ListAttempts(ctx, quiz.ID, user.ID)
 }
 
 // authorizeQuiz loads a quiz the user may see: the course's instructor sees every quiz, an enrolled

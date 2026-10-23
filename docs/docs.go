@@ -4063,7 +4063,7 @@ const docTemplate = `{
         },
         "/quizzes/{id}/attempts": {
             "get": {
-                "description": "Returns the logged-in student's past attempts at a quiz, newest first. A practice session has, per question, the selected option, the correct option and the explanation. A mock test attempt has its marks only (answers omitted).",
+                "description": "Returns the logged-in student's past attempts at a quiz, newest first. A practice session has, per question, the selected option, the correct option and the explanation. A mock test attempt also has its marks, and its answers cover every question (selectedOptionId null if skipped).",
                 "produces": [
                     "application/json"
                 ],
@@ -4378,7 +4378,7 @@ const docTemplate = `{
         },
         "/quizzes/{id}/submit": {
             "post": {
-                "description": "Mock tests only. The student sends all answers in one request; questions left out count as skipped (wrong). The attempt is saved and only the marks come back, like a real exam: no correct options or explanations. Practice sets are refused with 400.",
+                "description": "Mock tests only. The student sends all answers in one request; questions left out count as skipped (wrong). The attempt is saved and the marks come back with answers: every question graded, with the selected option (null if skipped), the correct option and the explanation. Practice sets are refused with 400.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4409,7 +4409,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "201": {
-                        "description": "Marks",
+                        "description": "Marks and graded answers",
                         "schema": {
                             "allOf": [
                                 {
@@ -5364,7 +5364,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "explanation": {
-                    "description": "shown to the student after submitting",
+                    "description": "shown to the student after checking (practice) or submitting (mock test)",
                     "type": "string"
                 },
                 "options": {
@@ -6239,6 +6239,12 @@ const docTemplate = `{
         "models.MockResult": {
             "type": "object",
             "properties": {
+                "answers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.AttemptAnswer"
+                    }
+                },
                 "attemptId": {
                     "type": "string"
                 },

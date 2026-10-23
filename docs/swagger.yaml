@@ -93,7 +93,8 @@ definitions:
   handlers.CreateQuestionRequest:
     properties:
       explanation:
-        description: shown to the student after submitting
+        description: shown to the student after checking (practice) or submitting
+          (mock test)
         type: string
       options:
         items:
@@ -694,6 +695,10 @@ definitions:
     type: object
   models.MockResult:
     properties:
+      answers:
+        items:
+          $ref: '#/definitions/models.AttemptAnswer'
+        type: array
       attemptId:
         type: string
       passPercent:
@@ -3752,8 +3757,8 @@ paths:
     get:
       description: Returns the logged-in student's past attempts at a quiz, newest
         first. A practice session has, per question, the selected option, the correct
-        option and the explanation. A mock test attempt has its marks only (answers
-        omitted).
+        option and the explanation. A mock test attempt also has its marks, and its
+        answers cover every question (selectedOptionId null if skipped).
       parameters:
       - description: Quiz ID
         in: path
@@ -3964,9 +3969,10 @@ paths:
       consumes:
       - application/json
       description: 'Mock tests only. The student sends all answers in one request;
-        questions left out count as skipped (wrong). The attempt is saved and only
-        the marks come back, like a real exam: no correct options or explanations.
-        Practice sets are refused with 400.'
+        questions left out count as skipped (wrong). The attempt is saved and the
+        marks come back with answers: every question graded, with the selected option
+        (null if skipped), the correct option and the explanation. Practice sets are
+        refused with 400.'
       parameters:
       - description: Quiz ID
         in: path
@@ -3983,7 +3989,7 @@ paths:
       - application/json
       responses:
         "201":
-          description: Marks
+          description: Marks and graded answers
           schema:
             allOf:
             - $ref: '#/definitions/utils.JSONResponse'

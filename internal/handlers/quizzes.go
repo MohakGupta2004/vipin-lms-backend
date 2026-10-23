@@ -29,7 +29,7 @@ type CreateQuizRequest struct {
 
 type CreateQuestionRequest struct {
 	QuestionText string                `json:"questionText"`
-	Explanation  string                `json:"explanation"` // shown to the student after submitting
+	Explanation  string                `json:"explanation"` // shown to the student after checking (practice) or submitting (mock test)
 	Options      []CreateOptionRequest `json:"options"`
 }
 
@@ -390,13 +390,13 @@ func (h *QuizHandler) CheckAnswer(w http.ResponseWriter, r *http.Request) {
 // SubmitMockTest godoc
 //
 //	@Summary		Submit a mock test
-//	@Description	Mock tests only. The student sends all answers in one request; questions left out count as skipped (wrong). The attempt is saved and only the marks come back, like a real exam: no correct options or explanations. Practice sets are refused with 400.
+//	@Description	Mock tests only. The student sends all answers in one request; questions left out count as skipped (wrong). The attempt is saved and the marks come back with answers: every question graded, with the selected option (null if skipped), the correct option and the explanation. Practice sets are refused with 400.
 //	@Tags			quizzes
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string										true	"Quiz ID"
 //	@Param			request	body		SubmitAttemptRequest						true	"Selected option per question"
-//	@Success		201		{object}	utils.JSONResponse{data=models.MockResult}	"Marks"
+//	@Success		201		{object}	utils.JSONResponse{data=models.MockResult}	"Marks and graded answers"
 //	@Failure		400		{object}	utils.JSONResponse							"Malformed payload, answer not part of this quiz, or a practice set"
 //	@Failure		401		{object}	utils.JSONResponse							"Not logged in"
 //	@Failure		403		{object}	utils.JSONResponse							"Not a student"
@@ -442,7 +442,7 @@ func decodeAnswers(w http.ResponseWriter, r *http.Request) (*models.User, []serv
 // ListAttempts godoc
 //
 //	@Summary		List my attempts at a quiz
-//	@Description	Returns the logged-in student's past attempts at a quiz, newest first. A practice session has, per question, the selected option, the correct option and the explanation. A mock test attempt has its marks only (answers omitted).
+//	@Description	Returns the logged-in student's past attempts at a quiz, newest first. A practice session has, per question, the selected option, the correct option and the explanation. A mock test attempt also has its marks, and its answers cover every question (selectedOptionId null if skipped).
 //	@Tags			quizzes
 //	@Produce		json
 //	@Param			id	path		string										true	"Quiz ID"

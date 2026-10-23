@@ -243,7 +243,7 @@ Recreate a quiz first if you already deleted `L1`.
 
 ## 10a. Quiz types: mock tests and practice sets (new)
 
-`type` is `mock_test` (default: optional `timeLimitSec`, `passPercent` defaults to 70, graded with marks) or `practice` (untimed, no marks; `timeLimitSec`/`passPercent` must be omitted). Practice: `POST /quizzes/{id}/check` reveals one answer at a time (nothing saved), and `POST /quizzes/{id}/attempts` saves the finished session. Mock test: `POST /quizzes/{id}/submit` returns marks only; answers are never revealed to students.
+`type` is `mock_test` (default: optional `timeLimitSec`, `passPercent` defaults to 70, graded with marks) or `practice` (untimed, no marks; `timeLimitSec`/`passPercent` must be omitted). Practice: `POST /quizzes/{id}/check` reveals one answer at a time (nothing saved), and `POST /quizzes/{id}/attempts` saves the finished session. Mock test: `POST /quizzes/{id}/submit` returns the marks plus every question graded (selected option, correct option, explanation); answers stay hidden until submit.
 
 | # | Request | Expect |
 |---|---------|--------|
@@ -253,11 +253,11 @@ Recreate a quiz first if you already deleted `L1`.
 | 10a.4 | `GET $B/lessons/$L1/quizzes?type=bogus` | `400` |
 | 10a.5 | Student: `POST $B/quizzes/$PQ/attempts` with 1 answer | `201`, one answer with explanation, `score/total/passed` null |
 | 10a.6 | Student: same with `"answers":[]` | `400` "answer at least one question" |
-| 10a.7 | Student: `POST $B/quizzes/$QZ/submit` on a mock test | `201`, `score/total/passed/passPercent` only, no answers |
+| 10a.7 | Student: `POST $B/quizzes/$QZ/submit` on a mock test | `201`, `score/total/passed/passPercent` and `answers` for every question (skipped ones have `selectedOptionId: null`), each with `correctOptionId` and `explanation` |
 | 10a.7b | Student: `POST $B/quizzes/$QZ/attempts` or `/check` on a mock test | `400` |
 | 10a.7c | Student: `POST $B/quizzes/$PQ/check` `{"questionId":"..","optionId":".."}` | `200`, `isCorrect`, `correctOptionId`, `explanation`; no attempt saved |
 | 10a.7d | Student: `POST $B/quizzes/$PQ/submit` | `400` |
-| 10a.7e | Student: `GET $B/quizzes/$QZ/attempts` on a mock test | Marks only, no `answers` |
+| 10a.7e | Student: `GET $B/quizzes/$QZ/attempts` on a mock test | Marks and `answers` for every question, like the submit response |
 | 10a.8 | `PATCH $B/quizzes/$PQ {"type":"mock_test"}` after an attempt | `409` |
 | 10a.9 | `PATCH` a quiz with no attempts to `{"type":"practice"}` | `200`, time limit and pass percent cleared |
 | 10a.10 | Student: `GET $B/quizzes/$PQ/attempts` | Practice history, no marks |
