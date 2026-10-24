@@ -101,6 +101,7 @@ func main() {
 	videoRepo := models.NewVideoRepository(db)
 	learningRepo := models.NewLearningRepository(db)
 	otpRepo := models.NewOTPRepository(db)
+	studentRepo := models.NewStudentRepository(db)
 
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
@@ -114,6 +115,7 @@ func main() {
 	flashcardService := service.NewFlashcardService(flashcardRepo, lessonRepo)
 	userService := service.NewUserService(userRepo)
 	learningService := service.NewLearningService(learningRepo)
+	studentService := service.NewStudentService(studentRepo)
 
 	// transcoding runs on an in-process queue; it stays unused (and nothing is enqueued) when GCS is disabled
 	var transcodeQueue *service.TranscodeQueue
@@ -149,6 +151,7 @@ func main() {
 	userHandler := handlers.NewUserHandler(userService)
 	videoHandler := handlers.NewVideoHandler(videoService)
 	learningHandler := handlers.NewLearningHandler(learningService)
+	studentHandler := handlers.NewStudentHandler(studentService)
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
@@ -190,6 +193,10 @@ func main() {
 	mux.Handle("GET /api/v1/me/quizzes", authMiddleware.RequireAuth(http.HandlerFunc(learningHandler.ListMyQuizzes)))
 	mux.Handle("GET /api/v1/me/progress", authMiddleware.RequireAuth(http.HandlerFunc(learningHandler.GetMyProgress)))
 	mux.Handle("GET /api/v1/catalog/courses", authMiddleware.RequireAuth(http.HandlerFunc(courseHandler.ListCatalog)))
+
+	// student progress for instructors (instructor or admin; only students enrolled in the caller's own courses, checked in the service)
+	mux.Handle("GET /api/v1/instructor/students", authMiddleware.RequireAuth(http.HandlerFunc(studentHandler.ListStudents)))
+	mux.Handle("GET /api/v1/instructor/students/{id}", authMiddleware.RequireAuth(http.HandlerFunc(studentHandler.GetStudent)))
 
 	// exam routes (any logged-in user)
 	mux.Handle("GET /api/v1/exams", authMiddleware.RequireAuth(http.HandlerFunc(examHandler.ListExams)))

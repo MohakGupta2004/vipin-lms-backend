@@ -989,6 +989,108 @@ definitions:
     - RoleStudent
     - RoleInstructor
     - RoleAdmin
+  models.StudentAttempt:
+    properties:
+      courseId:
+        type: string
+      courseTitle:
+        type: string
+      id:
+        type: string
+      lessonTitle:
+        type: string
+      passed:
+        description: nil for practice tests
+        type: boolean
+      percent:
+        type: integer
+      quizId:
+        type: string
+      quizTitle:
+        type: string
+      quizType:
+        type: string
+      score:
+        type: integer
+      submittedAt:
+        type: string
+      total:
+        type: integer
+    type: object
+  models.StudentCourse:
+    properties:
+      courseId:
+        type: string
+      courseTitle:
+        type: string
+      enrolledAt:
+        type: string
+      enrollmentStatus:
+        type: string
+      expiresAt:
+        description: null = never expires
+        type: string
+      flashcardsReviewed:
+        type: integer
+      flashcardsTotal:
+        description: FlashcardsTotal counts the cards of published decks; FlashcardsReviewed
+          the ones the student rated at least once.
+        type: integer
+      lastActiveAt:
+        description: LastActiveAt is the student's latest video progress, test submission
+          or flashcard rating in the course.
+        type: string
+      mockAvgPercent:
+        description: MockAvgPercent averages the best score of each mock test taken;
+          nil when none was taken.
+        type: integer
+      mockDone:
+        type: integer
+      mockPassed:
+        type: integer
+      mockTotal:
+        type: integer
+      notesTotal:
+        type: integer
+      percent:
+        description: Percent is the share of videos completed and quizzes attempted,
+          0 to 100.
+        type: integer
+      practiceDone:
+        type: integer
+      practiceTotal:
+        type: integer
+      quizAttempts:
+        type: integer
+      tier:
+        $ref: '#/definitions/models.Tier'
+      videosCompleted:
+        type: integer
+      videosInProgress:
+        type: integer
+      videosTotal:
+        type: integer
+      watchedSec:
+        description: |-
+          WatchedSec approximates time spent watching: the full length of completed videos plus the
+          position reached in the others.
+        type: integer
+    type: object
+  models.StudentVideo:
+    properties:
+      courseId:
+        type: string
+      courseTitle:
+        type: string
+      lessonTitle:
+        type: string
+      progress:
+        $ref: '#/definitions/models.VideoProgress'
+      title:
+        type: string
+      videoId:
+        type: string
+    type: object
   models.Tier:
     enum:
     - free
@@ -1115,6 +1217,64 @@ definitions:
         items:
           $ref: '#/definitions/models.CourseProgress'
         type: array
+      totals:
+        allOf:
+        - $ref: '#/definitions/models.CourseProgress'
+        description: Totals adds up every course; it has no courseId or courseTitle.
+    type: object
+  service.StudentDetail:
+    properties:
+      attempts:
+        items:
+          $ref: '#/definitions/models.StudentAttempt'
+        type: array
+      courses:
+        items:
+          $ref: '#/definitions/models.StudentCourse'
+        type: array
+      email:
+        type: string
+      firstName:
+        type: string
+      flashcardsReviewed:
+        type: integer
+      flashcardsTotal:
+        type: integer
+      id:
+        type: string
+      lastActiveAt:
+        type: string
+      lastName:
+        type: string
+      totals:
+        allOf:
+        - $ref: '#/definitions/models.CourseProgress'
+        description: Totals adds up every course; it has no courseId or courseTitle.
+      videos:
+        items:
+          $ref: '#/definitions/models.StudentVideo'
+        type: array
+    type: object
+  service.StudentProgress:
+    properties:
+      courses:
+        items:
+          $ref: '#/definitions/models.StudentCourse'
+        type: array
+      email:
+        type: string
+      firstName:
+        type: string
+      flashcardsReviewed:
+        type: integer
+      flashcardsTotal:
+        type: integer
+      id:
+        type: string
+      lastActiveAt:
+        type: string
+      lastName:
+        type: string
       totals:
         allOf:
         - $ref: '#/definitions/models.CourseProgress'
@@ -2718,6 +2878,95 @@ paths:
       summary: Rate a flashcard
       tags:
       - flashcards
+  /instructor/students:
+    get:
+      description: 'Instructors and admins. Every student enrolled (not cancelled)
+        in a course the caller owns, in name order, with their progress overall (totals)
+        and per course: videos completed and in progress, approximate watch time,
+        practice sets and mock tests attempted, mock tests passed and the average
+        best mock score, flashcards reviewed, enrollment status and tier, and when
+        they were last active. Students of other instructors'' courses are never included.'
+      parameters:
+      - description: Only this course
+        in: query
+        name: courseId
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Students
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/service.StudentProgress'
+                  type: array
+              type: object
+        "400":
+          description: Invalid courseId
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor or admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List the students of my courses
+      tags:
+      - instructor
+  /instructor/students/{id}:
+    get:
+      description: Instructors and admins. The student's progress in the caller's
+        courses (as in the list), the videos they played (most recent first) and up
+        to 100 submitted test attempts (newest first). 404 unless the student is enrolled
+        in a course the caller owns.
+      parameters:
+      - description: Student ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Student
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/service.StudentDetail'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an instructor or admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Not a student of the caller's courses
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: One student of my courses
+      tags:
+      - instructor
   /lessons/{id}:
     delete:
       description: Course owner (instructor or admin) deletes a lesson. Its notes

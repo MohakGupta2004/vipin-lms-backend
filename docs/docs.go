@@ -2490,6 +2490,138 @@ const docTemplate = `{
                 }
             }
         },
+        "/instructor/students": {
+            "get": {
+                "description": "Instructors and admins. Every student enrolled (not cancelled) in a course the caller owns, in name order, with their progress overall (totals) and per course: videos completed and in progress, approximate watch time, practice sets and mock tests attempted, mock tests passed and the average best mock score, flashcards reviewed, enrollment status and tier, and when they were last active. Students of other instructors' courses are never included.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instructor"
+                ],
+                "summary": "List the students of my courses",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Only this course",
+                        "name": "courseId",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Students",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/service.StudentProgress"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid courseId",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an instructor or admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/instructor/students/{id}": {
+            "get": {
+                "description": "Instructors and admins. The student's progress in the caller's courses (as in the list), the videos they played (most recent first) and up to 100 submitted test attempts (newest first). 404 unless the student is enrolled in a course the caller owns.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instructor"
+                ],
+                "summary": "One student of my courses",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Student ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Student",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/service.StudentDetail"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an instructor or admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not a student of the caller's courses",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/lessons/{id}": {
             "delete": {
                 "description": "Course owner (instructor or admin) deletes a lesson. Its notes and their PDF files are removed. Its quizzes are hidden, but students' past attempts are kept.",
@@ -6657,6 +6789,148 @@ const docTemplate = `{
                 "RoleAdmin"
             ]
         },
+        "models.StudentAttempt": {
+            "type": "object",
+            "properties": {
+                "courseId": {
+                    "type": "string"
+                },
+                "courseTitle": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lessonTitle": {
+                    "type": "string"
+                },
+                "passed": {
+                    "description": "nil for practice tests",
+                    "type": "boolean"
+                },
+                "percent": {
+                    "type": "integer"
+                },
+                "quizId": {
+                    "type": "string"
+                },
+                "quizTitle": {
+                    "type": "string"
+                },
+                "quizType": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "integer"
+                },
+                "submittedAt": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.StudentCourse": {
+            "type": "object",
+            "properties": {
+                "courseId": {
+                    "type": "string"
+                },
+                "courseTitle": {
+                    "type": "string"
+                },
+                "enrolledAt": {
+                    "type": "string"
+                },
+                "enrollmentStatus": {
+                    "type": "string"
+                },
+                "expiresAt": {
+                    "description": "null = never expires",
+                    "type": "string"
+                },
+                "flashcardsReviewed": {
+                    "type": "integer"
+                },
+                "flashcardsTotal": {
+                    "description": "FlashcardsTotal counts the cards of published decks; FlashcardsReviewed the ones the student rated at least once.",
+                    "type": "integer"
+                },
+                "lastActiveAt": {
+                    "description": "LastActiveAt is the student's latest video progress, test submission or flashcard rating in the course.",
+                    "type": "string"
+                },
+                "mockAvgPercent": {
+                    "description": "MockAvgPercent averages the best score of each mock test taken; nil when none was taken.",
+                    "type": "integer"
+                },
+                "mockDone": {
+                    "type": "integer"
+                },
+                "mockPassed": {
+                    "type": "integer"
+                },
+                "mockTotal": {
+                    "type": "integer"
+                },
+                "notesTotal": {
+                    "type": "integer"
+                },
+                "percent": {
+                    "description": "Percent is the share of videos completed and quizzes attempted, 0 to 100.",
+                    "type": "integer"
+                },
+                "practiceDone": {
+                    "type": "integer"
+                },
+                "practiceTotal": {
+                    "type": "integer"
+                },
+                "quizAttempts": {
+                    "type": "integer"
+                },
+                "tier": {
+                    "$ref": "#/definitions/models.Tier"
+                },
+                "videosCompleted": {
+                    "type": "integer"
+                },
+                "videosInProgress": {
+                    "type": "integer"
+                },
+                "videosTotal": {
+                    "type": "integer"
+                },
+                "watchedSec": {
+                    "description": "WatchedSec approximates time spent watching: the full length of completed videos plus the\nposition reached in the others.",
+                    "type": "integer"
+                }
+            }
+        },
+        "models.StudentVideo": {
+            "type": "object",
+            "properties": {
+                "courseId": {
+                    "type": "string"
+                },
+                "courseTitle": {
+                    "type": "string"
+                },
+                "lessonTitle": {
+                    "type": "string"
+                },
+                "progress": {
+                    "$ref": "#/definitions/models.VideoProgress"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "videoId": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Tier": {
             "type": "string",
             "enum": [
@@ -6833,6 +7107,98 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/models.CourseProgress"
                     }
+                },
+                "totals": {
+                    "description": "Totals adds up every course; it has no courseId or courseTitle.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.CourseProgress"
+                        }
+                    ]
+                }
+            }
+        },
+        "service.StudentDetail": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.StudentAttempt"
+                    }
+                },
+                "courses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.StudentCourse"
+                    }
+                },
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "flashcardsReviewed": {
+                    "type": "integer"
+                },
+                "flashcardsTotal": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastActiveAt": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "totals": {
+                    "description": "Totals adds up every course; it has no courseId or courseTitle.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.CourseProgress"
+                        }
+                    ]
+                },
+                "videos": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.StudentVideo"
+                    }
+                }
+            }
+        },
+        "service.StudentProgress": {
+            "type": "object",
+            "properties": {
+                "courses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.StudentCourse"
+                    }
+                },
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "flashcardsReviewed": {
+                    "type": "integer"
+                },
+                "flashcardsTotal": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastActiveAt": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
                 },
                 "totals": {
                     "description": "Totals adds up every course; it has no courseId or courseTitle.",
