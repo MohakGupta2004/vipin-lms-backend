@@ -45,11 +45,15 @@ func (u *User) CanTeach() bool {
 
 // UserSummary is the public view of a user for admin pickers. It never carries password data.
 type UserSummary struct {
-	ID        string `json:"id"`
-	FirstName string `json:"firstName"`
-	LastName  string `json:"lastName"`
-	Email     string `json:"email"`
-	Role      Role   `json:"role"`
+	ID          string     `json:"id"`
+	FirstName   string     `json:"firstName"`
+	LastName    string     `json:"lastName"`
+	Email       string     `json:"email"`
+	Role        Role       `json:"role"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	LastLoginAt *time.Time `json:"lastLoginAt"`
+	// EmailVerified is true once the user has confirmed their email with a one-time code.
+	EmailVerified bool `json:"emailVerified"`
 }
 
 type UserRepository struct {
@@ -126,16 +130,22 @@ func (r *UserRepository) UpdateRefreshToken(userId, refreshToken string, ctx con
 	return user, nil
 }
 
-// ListUsers returns active users sorted by name. Empty role means every role.
-func (r *UserRepository) ListUsers(ctx context.Context, role string, limit, offset int) ([]UserSummary, error) {
-	query := `SELECT id, first_name, last_name, email, role
-		FROM users
+// ListUsers returns active users sorted by name. Empty role means every role. With notEnrolled, only users
+// who have never had an enrollment (in any status) are returned, newest sign-up first.
+func (r *UserRepository) ListUsers(ctx context.Context, role string, notEnrolled bool, limit, offset int) ([]UserSummary, error) {
+	order := "first_name, last_name, id"
+	if notEnrolled {
+		order = "created_at DESC, id"
+	}
+	query := `SELECT id, first_name, last_name, email, role, created_at, last_login_at, email_verified_at IS NOT NULL
+		FROM users u
 		WHERE is_active AND deleted_at IS NULL
 		  AND ($1::text IS NULL OR role = $1)
-		ORDER BY first_name, last_name, id
-		LIMIT $2 OFFSET $3`
+		  AND (NOT $2 OR NOT EXISTS (SELECT 1 FROM enrollments e WHERE e.user_id = u.id))
+		ORDER BY ` + order + `
+		LIMIT $3 OFFSET $4`
 
-	rows, err := r.db.QueryContext(ctx, query, nullIfEmpty(role), limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, nullIfEmpty(role), notEnrolled, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -144,8 +154,13 @@ func (r *UserRepository) ListUsers(ctx context.Context, role string, limit, offs
 	users := []UserSummary{}
 	for rows.Next() {
 		var u UserSummary
-		if err := rows.Scan(&u.ID, &u.FirstName, &u.LastName, &u.Email, &u.Role); err != nil {
+		var lastLoginAt sql.NullTime
+		if err := rows.Scan(&u.ID, &u.FirstName, &u.LastName, &u.Email, &u.Role, &u.CreatedAt, &lastLoginAt, &u.EmailVerified); err != nil {
 			return nil, err
+		}
+		if lastLoginAt.Valid {
+			t := lastLoginAt.Time
+			u.LastLoginAt = &t
 		}
 		users = append(users, u)
 	}

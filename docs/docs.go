@@ -4593,7 +4593,7 @@ const docTemplate = `{
         },
         "/users": {
             "get": {
-                "description": "Admin only. Returns active users sorted by name, for the instructor picker (role=instructor) and the student picker (role=student). Never includes password data.",
+                "description": "Admin only. Returns active users sorted by name, for the instructor picker (role=instructor) and the student picker (role=student). With notEnrolled=true, only users who have never had an enrollment (new sign-ups waiting for access), newest sign-up first. Never includes password data.",
                 "produces": [
                     "application/json"
                 ],
@@ -4606,6 +4606,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "student, instructor or admin (default: all)",
                         "name": "role",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only users never enrolled in any course, newest first (default false)",
+                        "name": "notEnrolled",
                         "in": "query"
                     },
                     {
@@ -4644,7 +4650,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid role, limit or offset",
+                        "description": "Invalid role, notEnrolled, limit or offset",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -6980,13 +6986,23 @@ const docTemplate = `{
         "models.UserSummary": {
             "type": "object",
             "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
                 "email": {
                     "type": "string"
+                },
+                "emailVerified": {
+                    "description": "EmailVerified is true once the user has confirmed their email with a one-time code.",
+                    "type": "boolean"
                 },
                 "firstName": {
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "lastLoginAt": {
                     "type": "string"
                 },
                 "lastName": {

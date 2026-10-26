@@ -19,7 +19,8 @@ func NewUserService(userRepo *models.UserRepository) *UserService {
 }
 
 // ListUsers lets an admin list active users, optionally of one role, for instructor and student pickers.
-func (s *UserService) ListUsers(ctx context.Context, user *models.User, role string, limit, offset int) ([]models.UserSummary, error) {
+// notEnrolled narrows it to users who were never enrolled anywhere (new sign-ups waiting for access), newest first.
+func (s *UserService) ListUsers(ctx context.Context, user *models.User, role string, notEnrolled bool, limit, offset int) ([]models.UserSummary, error) {
 	if user.Role != models.RoleAdmin {
 		return nil, ErrForbidden
 	}
@@ -29,5 +30,5 @@ func (s *UserService) ListUsers(ctx context.Context, user *models.User, role str
 	default:
 		return nil, fmt.Errorf("%w: role must be student, instructor or admin", ErrInvalidInput)
 	}
-	return s.userRepo.ListUsers(ctx, role, limit, offset)
+	return s.userRepo.ListUsers(ctx, role, notEnrolled, limit, offset)
 }

@@ -1128,11 +1128,19 @@ definitions:
     type: object
   models.UserSummary:
     properties:
+      createdAt:
+        type: string
       email:
         type: string
+      emailVerified:
+        description: EmailVerified is true once the user has confirmed their email
+          with a one-time code.
+        type: boolean
       firstName:
         type: string
       id:
+        type: string
+      lastLoginAt:
         type: string
       lastName:
         type: string
@@ -4273,13 +4281,19 @@ paths:
   /users:
     get:
       description: Admin only. Returns active users sorted by name, for the instructor
-        picker (role=instructor) and the student picker (role=student). Never includes
-        password data.
+        picker (role=instructor) and the student picker (role=student). With notEnrolled=true,
+        only users who have never had an enrollment (new sign-ups waiting for access),
+        newest sign-up first. Never includes password data.
       parameters:
       - description: 'student, instructor or admin (default: all)'
         in: query
         name: role
         type: string
+      - description: Only users never enrolled in any course, newest first (default
+          false)
+        in: query
+        name: notEnrolled
+        type: boolean
       - description: Max users to return (default 50, max 200)
         in: query
         name: limit
@@ -4303,7 +4317,7 @@ paths:
                   type: array
               type: object
         "400":
-          description: Invalid role, limit or offset
+          description: Invalid role, notEnrolled, limit or offset
           schema:
             $ref: '#/definitions/utils.JSONResponse'
         "401":

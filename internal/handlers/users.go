@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/lib/utils"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/middleware"
@@ -26,17 +27,18 @@ func NewUserHandler(userService *service.UserService) *UserHandler {
 // ListUsers godoc
 //
 //	@Summary		List users
-//	@Description	Admin only. Returns active users sorted by name, for the instructor picker (role=instructor) and the student picker (role=student). Never includes password data.
+//	@Description	Admin only. Returns active users sorted by name, for the instructor picker (role=instructor) and the student picker (role=student). With notEnrolled=true, only users who have never had an enrollment (new sign-ups waiting for access), newest sign-up first. Never includes password data.
 //	@Tags			users
 //	@Produce		json
-//	@Param			role	query		string											false	"student, instructor or admin (default: all)"
-//	@Param			limit	query		int												false	"Max users to return (default 50, max 200)"
-//	@Param			offset	query		int												false	"Number of users to skip (default 0)"
-//	@Success		200		{object}	utils.JSONResponse{data=[]models.UserSummary}	"Users"
-//	@Failure		400		{object}	utils.JSONResponse								"Invalid role, limit or offset"
-//	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
-//	@Failure		403		{object}	utils.JSONResponse								"Not an admin"
-//	@Failure		500		{object}	utils.JSONResponse								"Internal server error"
+//	@Param			role		query		string											false	"student, instructor or admin (default: all)"
+//	@Param			notEnrolled	query		bool											false	"Only users never enrolled in any course, newest first (default false)"
+//	@Param			limit		query		int												false	"Max users to return (default 50, max 200)"
+//	@Param			offset		query		int												false	"Number of users to skip (default 0)"
+//	@Success		200			{object}	utils.JSONResponse{data=[]models.UserSummary}	"Users"
+//	@Failure		400			{object}	utils.JSONResponse								"Invalid role, notEnrolled, limit or offset"
+//	@Failure		401			{object}	utils.JSONResponse								"Not logged in"
+//	@Failure		403			{object}	utils.JSONResponse								"Not an admin"
+//	@Failure		500			{object}	utils.JSONResponse								"Internal server error"
 //	@Router			/users [get]
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
@@ -56,7 +58,15 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	users, err := h.userService.ListUsers(r.Context(), user, r.URL.Query().Get("role"), limit, offset)
+	notEnrolled := false
+	if v := r.URL.Query().Get("notEnrolled"); v != "" {
+		if notEnrolled, err = strconv.ParseBool(v); err != nil {
+			utils.WriteJSONResponse(w, http.StatusBadRequest, "notEnrolled must be true or false")
+			return
+		}
+	}
+
+	users, err := h.userService.ListUsers(r.Context(), user, r.URL.Query().Get("role"), notEnrolled, limit, offset)
 	if err != nil {
 		writeServiceError(w, err)
 		return
