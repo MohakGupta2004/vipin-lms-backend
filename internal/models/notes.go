@@ -119,3 +119,11 @@ func (r *NoteRepository) Delete(ctx context.Context, noteID string) (objectKey s
 	err = r.db.QueryRowContext(ctx, query, noteID).Scan(&objectKey)
 	return objectKey, err
 }
+
+// FileInUse reports whether any note still points at this stored file. Batches copied from one course
+// share their PDFs, so a file may outlive the note it was uploaded with.
+func (r *NoteRepository) FileInUse(ctx context.Context, objectKey string) (bool, error) {
+	var inUse bool
+	err := r.db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM notes WHERE object_key = $1)", objectKey).Scan(&inUse)
+	return inUse, err
+}

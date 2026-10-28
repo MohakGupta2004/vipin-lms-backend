@@ -295,3 +295,11 @@ func (r *VideoRepository) GetProgress(ctx context.Context, userID, videoID strin
 	}
 	return positionSec, err
 }
+
+// FilesInUse reports whether any video still points at this uploaded source file, and so at its folder.
+// Batches copied from one course share their offline recordings.
+func (r *VideoRepository) FilesInUse(ctx context.Context, originalKey string) (bool, error) {
+	var inUse bool
+	err := r.db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM videos WHERE original_key = $1)", originalKey).Scan(&inUse)
+	return inUse, err
+}

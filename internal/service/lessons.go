@@ -63,7 +63,8 @@ func authorizeCourse(ctx context.Context, repo *models.LessonRepository, user *m
 
 // authorizeTier tells which tier a user has in a course: the owner and anyone in a free course get
 // ultra, an enrolled student gets the tier on their enrollment, and any other user may preview a
-// published course as free. Free users only open the free lessons, plus the notes, quizzes,
+// published, public course as free. A private course, or another batch of a course the user is
+// enrolled in, is closed to everyone but its enrolled students. Free users only open the free lessons, plus the notes, quizzes,
 // flashcards and videos tagged free on their own (a free lesson does not unlock them). Items
 // tagged for other tiers are opened with models.CanAccess.
 func authorizeTier(ctx context.Context, repo *models.LessonRepository, user *models.User, courseID string) (isTeacher bool, tier models.Tier, err error) {
@@ -83,9 +84,9 @@ func authorizeTier(ctx context.Context, repo *models.LessonRepository, user *mod
 		return true, models.TierUltra, nil
 	case access.EnrolledTier != "":
 		return false, access.EnrolledTier, nil
-	case access.Published && access.Free:
-		return false, models.TierUltra, nil // a free course is open to every logged-in user
-	case access.Published:
+	case access.Previewable && access.Free:
+		return false, models.TierUltra, nil // a free course is open to every logged-in user who can find it
+	case access.Previewable:
 		return false, models.TierFree, nil
 	default:
 		return false, "", ErrForbidden
@@ -196,7 +197,7 @@ func (s *LessonService) UpdateLesson(ctx context.Context, user *models.User, les
 }
 
 // DeleteLesson lets the course owner (instructor or admin) delete a lesson. Its notes and their PDF
-// files are removed; its quizzes are hidden but students' attempts are kept.
+// files are removed (files another batch still uses are kept); its quizzes are hidden but students' attempts are kept.
 func (s *LessonService) DeleteLesson(ctx context.Context, user *models.User, lessonID string) error {
 	if _, err := s.ownedLesson(ctx, user, lessonID); err != nil {
 		return err
@@ -221,7 +222,7 @@ func (s *LessonService) DeleteLesson(ctx context.Context, user *models.User, les
 		return err
 	}
 	for _, key := range objectKeys {
-		deleteStoredPDF(s.store, key)
+		deleteUnusedPDF(ctx, s.noteRepo, s.store, key)
 	}
 	return nil
 }

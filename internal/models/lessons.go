@@ -38,26 +38,27 @@ func NewLessonRepository(db *sql.DB) *LessonRepository {
 //   - isInstructor: the user is the course's instructor_id (the caller still checks the role).
 //   - enrolledTier: the course is published and the user has an enrollment that is still valid;
 //     it is that enrollment's tier. Students never see the content of draft or archived courses.
+//   - previewable: the user may look at the course without an enrollment (see coursePreviewableSQL).
 func (r *LessonRepository) CourseAccess(ctx context.Context, courseID, userID string) (access CourseAccessInfo, err error) {
 	query := `
-		SELECT c.instructor_id = $2,
-		       c.status = 'published',
+		SELECT c.instructor_id = $1,
+		       ` + coursePreviewableSQL + `,
 		       c.is_free,
 		       COALESCE((
 		           SELECT e.tier FROM enrollments e
 		           WHERE e.course_id = c.id
 		             AND c.status = 'published'
-		             AND e.user_id = $2
+		             AND e.user_id = $1
 		             AND e.status IN ('active', 'completed')
 		             AND (e.expires_at IS NULL OR e.expires_at > now())
 		           ORDER BY CASE e.tier WHEN 'ultra' THEN 3 WHEN 'premium' THEN 2 ELSE 1 END DESC
 		           LIMIT 1
 		       ), '')
 		FROM courses c
-		WHERE c.id = $1 AND c.deleted_at IS NULL`
+		WHERE c.id = $2 AND c.deleted_at IS NULL`
 
-	err = r.db.QueryRowContext(ctx, query, courseID, userID).
-		Scan(&access.IsInstructor, &access.Published, &access.Free, &access.EnrolledTier)
+	err = r.db.QueryRowContext(ctx, query, userID, courseID).
+		Scan(&access.IsInstructor, &access.Previewable, &access.Free, &access.EnrolledTier)
 	return access, err
 }
 
@@ -65,7 +66,7 @@ func (r *LessonRepository) CourseAccess(ctx context.Context, courseID, userID st
 type CourseAccessInfo struct {
 	IsInstructor bool // the user's id is the course's instructor_id
 	EnrolledTier Tier // tier of the user's valid enrollment in the published course; "" = not enrolled
-	Published    bool
+	Previewable  bool // published, public and not hidden by the user's enrollment in another batch
 	Free         bool // the whole course is free
 }
 

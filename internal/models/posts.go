@@ -76,7 +76,7 @@ func (r *PostRepository) CreatePost(ctx context.Context, authorID, courseID, con
 }
 
 // ListFeed returns the newest posts this user is allowed to see:
-//   - posts in free courses (everyone),
+//   - posts in free courses the user may preview (see coursePreviewableSQL),
 //   - posts in courses the user is enrolled in (enrollment still valid),
 //   - posts in courses the user teaches (so instructors see their own posts).
 func (r *PostRepository) ListFeed(ctx context.Context, userID string, limit, offset int) ([]Post, error) {
@@ -88,17 +88,15 @@ func (r *PostRepository) ListFeed(ctx context.Context, userID string, limit, off
 		WHERE c.deleted_at IS NULL
 		  AND (
 		        c.instructor_id = $1
+		        OR (c.is_free AND ` + coursePreviewableSQL + `)
 		        OR (
 		            c.status = 'published'
-		            AND (
-		                c.is_free
-		                OR EXISTS (
-		                    SELECT 1 FROM enrollments e
-		                    WHERE e.course_id = c.id
-		                      AND e.user_id = $1
-		                      AND e.status IN ('active', 'completed')
-		                      AND (e.expires_at IS NULL OR e.expires_at > now())
-		                )
+		            AND EXISTS (
+		                SELECT 1 FROM enrollments e
+		                WHERE e.course_id = c.id
+		                  AND e.user_id = $1
+		                  AND e.status IN ('active', 'completed')
+		                  AND (e.expires_at IS NULL OR e.expires_at > now())
 		            )
 		        )
 		  )

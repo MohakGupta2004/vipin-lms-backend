@@ -74,13 +74,13 @@ func tiersParam(tiers []string) []string {
 }
 
 // userTierSQL is an SQL expression for the tier user $1 has in the course aliased c: ultra for its
-// owner, the tier of a valid enrollment, ultra in a free published course, otherwise free. It mirrors
-// the service's authorizeTier.
+// owner, the tier of a valid enrollment, ultra in a free course they may preview, otherwise free. It
+// mirrors the service's authorizeTier.
 const userTierSQL = `COALESCE(
 		CASE WHEN c.instructor_id = $1 THEN 'ultra' END,
 		(SELECT e.tier FROM enrollments e
 			WHERE e.course_id = c.id AND e.user_id = $1 AND c.status = 'published'
 			  AND e.status IN ('active', 'completed')
 			  AND (e.expires_at IS NULL OR e.expires_at > now())),
-		CASE WHEN c.is_free AND c.status = 'published' THEN 'ultra' END,
+		CASE WHEN c.is_free AND ` + coursePreviewableSQL + ` THEN 'ultra' END,
 		'free')`

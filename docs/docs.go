@@ -904,6 +904,94 @@ const docTemplate = `{
                 }
             }
         },
+        "/courses/{id}/batches": {
+            "post": {
+                "description": "Course owner only. Copies the course into a new draft, public course in the same batch group with the next batch number (shown as 2.0, 3.0, ...). Lessons, PDF notes, offline recordings, tests and flashcards are copied; Meet recordings, enrollments and student progress are not. An empty body uses the source's title and a \"-batch-\u003cnumber\u003e\" slug.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "courses"
+                ],
+                "summary": "Start the next batch of a course",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Course ID to copy",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional title and slug",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateBatchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Batch created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Course"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or invalid fields",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an instructor or admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Course not found, or not owned by this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Slug already used",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/courses/{id}/flashcard-decks": {
             "get": {
                 "description": "One deck per lesson plus the course-wide deck (lessonId null), with card counts, free card counts and the user's own review progress. The course owner also sees drafts; everyone else only published decks of published lessons.",
@@ -1429,6 +1517,89 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Course not found, or not visible to this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/courses/{id}/visibility": {
+            "patch": {
+                "description": "Course owner only. A private course disappears from the catalog and can't be previewed or opened by anyone who is not enrolled in it. Students already enrolled keep their access until their enrollment expires.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "courses"
+                ],
+                "summary": "Make a course public or private",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Course ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New visibility",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateCourseVisibilityRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Course updated",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Course"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or invalid visibility",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an instructor or admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Course not found, or not owned by this user",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -5366,6 +5537,19 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "handlers.CreateBatchRequest": {
+            "type": "object",
+            "properties": {
+                "slug": {
+                    "description": "defaults to the source's slug ending in \"-batch-\u003cnumber\u003e\"",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "defaults to the source course's title",
+                    "type": "string"
+                }
+            }
+        },
         "handlers.CreateCourseRequest": {
             "type": "object",
             "properties": {
@@ -5688,6 +5872,15 @@ const docTemplate = `{
             "properties": {
                 "status": {
                     "description": "draft, published or archived",
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.UpdateCourseVisibilityRequest": {
+            "type": "object",
+            "properties": {
+                "visibility": {
+                    "description": "public or private",
                     "type": "string"
                 }
             }
@@ -6026,6 +6219,13 @@ const docTemplate = `{
                     "description": "Access is only filled in by GET /courses/{id}: \"owner\", \"full\" (enrolled, or the course is free)\nor \"preview\" (published course, not enrolled: free content only).",
                     "type": "string"
                 },
+                "batchGroupId": {
+                    "description": "BatchGroupID is shared by every batch of a course: the id of its first batch. BatchNumber counts the\nbatches from 1, so batch 2 of IFC is shown as \"IFC 2.0\".",
+                    "type": "string"
+                },
+                "batchNumber": {
+                    "type": "integer"
+                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -6090,6 +6290,10 @@ const docTemplate = `{
                 },
                 "videoCount": {
                     "type": "integer"
+                },
+                "visibility": {
+                    "description": "Visibility is public or private. A private course stays open to the students already enrolled in it\n(until their enrollment ends) and is hidden from everyone else.",
+                    "type": "string"
                 }
             }
         },
@@ -6099,6 +6303,13 @@ const docTemplate = `{
                 "access": {
                     "description": "Access is only filled in by GET /courses/{id}: \"owner\", \"full\" (enrolled, or the course is free)\nor \"preview\" (published course, not enrolled: free content only).",
                     "type": "string"
+                },
+                "batchGroupId": {
+                    "description": "BatchGroupID is shared by every batch of a course: the id of its first batch. BatchNumber counts the\nbatches from 1, so batch 2 of IFC is shown as \"IFC 2.0\".",
+                    "type": "string"
+                },
+                "batchNumber": {
+                    "type": "integer"
                 },
                 "createdAt": {
                     "type": "string"
@@ -6136,6 +6347,10 @@ const docTemplate = `{
                     ]
                 },
                 "title": {
+                    "type": "string"
+                },
+                "visibility": {
+                    "description": "Visibility is public or private. A private course stays open to the students already enrolled in it\n(until their enrollment ends) and is hidden from everyone else.",
                     "type": "string"
                 }
             }

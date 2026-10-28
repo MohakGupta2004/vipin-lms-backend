@@ -125,8 +125,9 @@ func (s *CourseService) ListCourses(ctx context.Context, user *models.User, limi
 }
 
 // GetCourse returns one course with the user's Access to it. Admins see any course and the owner sees
-// theirs (drafts included). Every other logged-in user sees a published course: in full when enrolled
-// or when the course is free, otherwise as a preview of its free content. Anything else is ErrCourseNotFound.
+// theirs (drafts included). Every other logged-in user sees a published course in full when enrolled.
+// When they are not, a public course is open in full if it is free and as a preview of its free content
+// otherwise, unless they are enrolled in another batch of it. Anything else is ErrCourseNotFound.
 func (s *CourseService) GetCourse(ctx context.Context, user *models.User, courseID string) (*models.Course, error) {
 	if !uuidPattern.MatchString(courseID) {
 		return nil, ErrCourseNotFound
@@ -153,9 +154,23 @@ func (s *CourseService) GetCourse(ctx context.Context, user *models.User, course
 	if err != nil {
 		return nil, err
 	}
-	switch {
-	case tier != "":
+	if tier != "" {
 		course.Access, course.Tier = "full", tier
+		return course, nil
+	}
+
+	// Not enrolled: a private course, or another batch of a course they are enrolled in, stays hidden.
+	previewable, err := s.courseRepo.Previewable(ctx, course.ID, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !previewable {
+		if user.Role == models.RoleAdmin {
+			return course, nil
+		}
+		return nil, ErrCourseNotFound
+	}
+	switch {
 	case course.IsFree:
 		course.Access, course.Tier = "full", models.TierUltra
 	default:
@@ -321,4 +336,69 @@ func (s *CourseService) UpdateCourseStatus(ctx context.Context, user *models.Use
 
 func isValidCourseStatus(status string) bool {
 	return status == "draft" || status == "published" || status == "archived"
+}
+
+// UpdateCourseVisibility lets the course owner (instructor or admin) make a course public or private.
+// Making it private hides it from everyone who is not enrolled yet; enrolled students keep their access
+// until their enrollment ends.
+func (s *CourseService) UpdateCourseVisibility(ctx context.Context, user *models.User, courseID, visibility string) (*models.Course, error) {
+	if !user.CanTeach() {
+		return nil, ErrForbidden
+	}
+	if !uuidPattern.MatchString(courseID) {
+		return nil, ErrCourseNotFound
+	}
+	visibility = strings.TrimSpace(visibility)
+	if visibility != models.VisibilityPublic && visibility != models.VisibilityPrivate {
+		return nil, fmt.Errorf("%w: visibility must be public or private", ErrInvalidInput)
+	}
+
+	course, err := s.courseRepo.UpdateVisibility(ctx, courseID, user.ID, visibility)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrCourseNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return course, nil
+}
+
+// NewBatchInput names the next batch of a course. Empty fields get a default: the source's title, and
+// the source's slug ending in "-batch-<number>".
+type NewBatchInput struct {
+	Title string
+	Slug  string
+}
+
+// CreateNextBatch lets the course owner (instructor or admin) start the next batch of their course: a
+// draft copy with the same lessons, PDF notes, offline recordings, tests and flashcards, but no Meet
+// recordings and no students. The source course is left as it is; the owner usually makes it private next.
+func (s *CourseService) CreateNextBatch(ctx context.Context, user *models.User, courseID string, in NewBatchInput) (*models.Course, error) {
+	if !user.CanTeach() {
+		return nil, ErrForbidden
+	}
+	if _, err := s.ownedCourse(ctx, user, courseID); err != nil {
+		return nil, err
+	}
+
+	in.Title = strings.TrimSpace(in.Title)
+	in.Slug = strings.TrimSpace(in.Slug)
+	switch {
+	case utf8.RuneCountInString(in.Title) > maxTitleLength:
+		return nil, fmt.Errorf("%w: title must be at most %d characters", ErrInvalidInput, maxTitleLength)
+	case in.Slug != "" && (len(in.Slug) > maxSlugLength || !slugPattern.MatchString(in.Slug)):
+		return nil, fmt.Errorf("%w: slug must be lowercase letters, numbers and dashes, like \"neet-physics\"", ErrInvalidInput)
+	}
+
+	course, err := s.courseRepo.CopyAsNextBatch(ctx, courseID, models.NewBatch{Title: in.Title, Slug: in.Slug})
+	if isUniqueViolation(err) {
+		return nil, ErrSlugTaken
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrCourseNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return course, nil
 }

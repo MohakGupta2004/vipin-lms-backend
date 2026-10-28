@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/lib/utils"
@@ -38,6 +40,16 @@ type UpdateCourseRequest struct {
 
 type UpdateCourseStatusRequest struct {
 	Status string `json:"status"` // draft, published or archived
+}
+
+type UpdateCourseVisibilityRequest struct {
+	Visibility string `json:"visibility"` // public or private
+}
+
+// CreateBatchRequest names the new batch. Both fields are optional.
+type CreateBatchRequest struct {
+	Title string `json:"title"` // defaults to the source course's title
+	Slug  string `json:"slug"`  // defaults to the source's slug ending in "-batch-<number>"
 }
 
 type CourseHandler struct {
@@ -352,4 +364,85 @@ func (h *CourseHandler) DeleteCourse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteJSONResponse(w, http.StatusOK, "course deleted")
+}
+
+// UpdateCourseVisibility godoc
+//
+//	@Summary		Make a course public or private
+//	@Description	Course owner only. A private course disappears from the catalog and can't be previewed or opened by anyone who is not enrolled in it. Students already enrolled keep their access until their enrollment expires.
+//	@Tags			courses
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string									true	"Course ID"
+//	@Param			request	body		UpdateCourseVisibilityRequest			true	"New visibility"
+//	@Success		200		{object}	utils.JSONResponse{data=models.Course}	"Course updated"
+//	@Failure		400		{object}	utils.JSONResponse						"Malformed payload or invalid visibility"
+//	@Failure		401		{object}	utils.JSONResponse						"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse						"Not an instructor or admin"
+//	@Failure		404		{object}	utils.JSONResponse						"Course not found, or not owned by this user"
+//	@Failure		500		{object}	utils.JSONResponse						"Internal server error"
+//	@Router			/courses/{id}/visibility [patch]
+func (h *CourseHandler) UpdateCourseVisibility(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxCourseBodyBytes)
+	var req UpdateCourseVisibilityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
+		return
+	}
+
+	course, err := h.courseService.UpdateCourseVisibility(r.Context(), user, r.PathValue("id"), req.Visibility)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, course)
+}
+
+// CreateBatch godoc
+//
+//	@Summary		Start the next batch of a course
+//	@Description	Course owner only. Copies the course into a new draft, public course in the same batch group with the next batch number (shown as 2.0, 3.0, ...). Lessons, PDF notes, offline recordings, tests and flashcards are copied; Meet recordings, enrollments and student progress are not. An empty body uses the source's title and a "-batch-<number>" slug.
+//	@Tags			courses
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string									true	"Course ID to copy"
+//	@Param			request	body		CreateBatchRequest						false	"Optional title and slug"
+//	@Success		201		{object}	utils.JSONResponse{data=models.Course}	"Batch created"
+//	@Failure		400		{object}	utils.JSONResponse						"Malformed payload or invalid fields"
+//	@Failure		401		{object}	utils.JSONResponse						"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse						"Not an instructor or admin"
+//	@Failure		404		{object}	utils.JSONResponse						"Course not found, or not owned by this user"
+//	@Failure		409		{object}	utils.JSONResponse						"Slug already used"
+//	@Failure		500		{object}	utils.JSONResponse						"Internal server error"
+//	@Router			/courses/{id}/batches [post]
+func (h *CourseHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxCourseBodyBytes)
+	var req CreateBatchRequest
+	// The body is optional: an empty one keeps the defaults.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
+		return
+	}
+
+	course, err := h.courseService.CreateNextBatch(r.Context(), user, r.PathValue("id"), service.NewBatchInput{
+		Title: req.Title,
+		Slug:  req.Slug,
+	})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusCreated, course)
 }

@@ -268,7 +268,7 @@ func (s *NoteService) DeleteNote(ctx context.Context, user *models.User, noteID 
 	if err != nil {
 		return err
 	}
-	s.deleteObject(objectKey)
+	deleteUnusedPDF(ctx, s.noteRepo, s.store, objectKey)
 	return nil
 }
 
@@ -286,6 +286,20 @@ func (s *NoteService) getNote(ctx context.Context, noteID string) (*models.Note,
 // deleteObject removes a stored file on a best-effort basis; a failure only leaves an orphan file.
 func (s *NoteService) deleteObject(object string) {
 	deleteStoredPDF(s.store, object)
+}
+
+// deleteUnusedPDF removes the file of a deleted note unless another note still uses it (batches copied
+// from one course share their PDFs). If that can't be checked the file is kept: an orphan file is
+// harmless, a missing one is not.
+func deleteUnusedPDF(ctx context.Context, repo *models.NoteRepository, store storage.PDFStore, object string) {
+	inUse, err := repo.FileInUse(ctx, object)
+	if err != nil {
+		slog.Error("could not check whether a note file is still used; keeping it", "object", object, "err", err)
+		return
+	}
+	if !inUse {
+		deleteStoredPDF(store, object)
+	}
 }
 
 // deleteStoredPDF removes a stored file on a best-effort basis; a failure only leaves an orphan file.

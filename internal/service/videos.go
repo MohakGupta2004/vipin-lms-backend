@@ -302,7 +302,8 @@ func (s *VideoService) UpdateVideo(ctx context.Context, user *models.User, video
 }
 
 // DeleteVideo lets the person who uploaded a video (and still owns its course) delete it: the row goes at once,
-// then the source file and HLS folder are removed from the bucket in the background. A video that is still
+// then the source file and HLS folder are removed from the bucket in the background, unless a copy of the
+// video in another batch still uses them. A video that is still
 // transcoding can't be deleted, so the job never writes into a deleted folder.
 func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, videoID string) error {
 	video, err := s.ownedVideo(ctx, user, videoID)
@@ -323,8 +324,16 @@ func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, video
 	if busy {
 		return ErrVideoProcessing
 	}
-	// Everything of a video lives under its own folder: courses/{course}/videos/{video}/ (source + hls/).
-	go deleteVideoFiles(s.store, path.Dir(video.OriginalKey)+"/")
+	// Batches copied from one course share their recordings; the files stay while another copy uses them.
+	inUse, err := s.videoRepo.FilesInUse(ctx, video.OriginalKey)
+	if err != nil {
+		slog.Error("could not check whether video files are still used; keeping them", "video", video.ID, "err", err)
+		return nil
+	}
+	if !inUse {
+		// Everything of a video lives under its own folder: courses/{course}/videos/{video}/ (source + hls/).
+		go deleteVideoFiles(s.store, path.Dir(video.OriginalKey)+"/")
+	}
 	return nil
 }
 
