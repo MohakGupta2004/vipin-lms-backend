@@ -9,6 +9,7 @@ import (
 	"time"
 
 	gcs "cloud.google.com/go/storage"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/iterator"
 )
 
@@ -18,6 +19,9 @@ const (
 	MaxHLSFileSize int64 = 64 << 20 // 64 MiB
 
 	hlsUploadFormExpiry = time.Hour
+
+	// deleteWorkers is how many objects DeletePrefix deletes at once.
+	deleteWorkers = 64
 )
 
 // hlsContentTypes maps an HLS file extension to the content type it must be stored with.
@@ -202,19 +206,35 @@ func (s *GCSVideoStore) DeletePrefix(ctx context.Context, prefix string) error {
 		return errors.New("storage: refusing to delete an empty prefix")
 	}
 	bucket := s.client.Bucket(s.bucket)
-	it := bucket.Objects(ctx, &gcs.Query{Prefix: prefix})
+	query := &gcs.Query{Prefix: prefix}
+	if err := query.SetAttrSelection([]string{"Name", "Generation"}); err != nil {
+		return err
+	}
+	it := bucket.Objects(ctx, query)
+	// Every object is its own delete request, and a long video has thousands of segments: one at a time they
+	// would outlast any sensible timeout. One failure doesn't stop the rest; the first error is returned once
+	// all are tried.
+	var g errgroup.Group
+	g.SetLimit(deleteWorkers)
 	for {
 		attrs, err := it.Next()
 		if errors.Is(err, iterator.Done) {
-			return nil
+			break
 		}
 		if err != nil {
+			_ = g.Wait()
 			return fmt.Errorf("storage: list objects: %w", err)
 		}
-		if err := bucket.Object(attrs.Name).Delete(ctx); err != nil && !errors.Is(err, gcs.ErrObjectNotExist) {
-			return fmt.Errorf("storage: delete object %s: %w", attrs.Name, err)
-		}
+		// The generation precondition makes the delete idempotent, so the client retries it on transient errors.
+		obj := bucket.Object(attrs.Name).Generation(attrs.Generation)
+		g.Go(func() error {
+			if err := obj.Delete(ctx); err != nil && !errors.Is(err, gcs.ErrObjectNotExist) {
+				return fmt.Errorf("storage: delete object %s: %w", obj.ObjectName(), err)
+			}
+			return nil
+		})
 	}
+	return g.Wait()
 }
 
 func (s *GCSVideoStore) Close() error { return s.client.Close() }

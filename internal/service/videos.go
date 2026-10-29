@@ -31,8 +31,9 @@ const (
 	maxPlaylistBytes = 1 << 20
 	// maxVideoPositionSec caps a saved playback position (24 hours), since video durations are not stored yet.
 	maxVideoPositionSec = 24 * 60 * 60
-	// videoCleanupTimeout bounds removing a deleted video's files: one source file plus every HLS segment.
-	videoCleanupTimeout = 2 * time.Minute
+	// videoCleanupTimeout bounds removing a deleted video's files: one source file plus every HLS segment,
+	// up to maxHLSFiles for a long browser-transcoded video.
+	videoCleanupTimeout = 10 * time.Minute
 )
 
 // playlistNamePattern is a playlist file directly inside a video's hls/ folder, e.g. "media-sd.m3u8".

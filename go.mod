@@ -13,6 +13,7 @@ require (
 	github.com/swaggo/swag v1.16.6
 	go.uber.org/ratelimit v0.3.1
 	golang.org/x/crypto v0.57.0
+	golang.org/x/sync v0.23.0
 	google.golang.org/api v0.288.0
 )
 
@@ -69,7 +70,6 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
