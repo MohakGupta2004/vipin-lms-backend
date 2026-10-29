@@ -54,11 +54,13 @@ type UpdateCourseInput struct {
 
 type CourseService struct {
 	courseRepo *models.CourseRepository
+	videoFiles videoFileCleaner
 }
 
-func NewCourseService(courseRepo *models.CourseRepository) *CourseService {
+func NewCourseService(courseRepo *models.CourseRepository, videoFiles videoFileCleaner) *CourseService {
 	return &CourseService{
 		courseRepo: courseRepo,
+		videoFiles: videoFiles,
 	}
 }
 
@@ -250,7 +252,8 @@ func (s *CourseService) UpdateCourse(ctx context.Context, user *models.User, cou
 }
 
 // DeleteCourse lets the course owner (instructor or admin) soft-delete it. Enrollments are kept as
-// they are, but every content and feed query skips deleted courses, so students lose access.
+// they are, but every content and feed query skips deleted courses, so students lose access. Its videos
+// are deleted and their files removed (files another batch still uses are kept).
 func (s *CourseService) DeleteCourse(ctx context.Context, user *models.User, courseID string) error {
 	if !user.CanTeach() {
 		return ErrForbidden
@@ -258,11 +261,15 @@ func (s *CourseService) DeleteCourse(ctx context.Context, user *models.User, cou
 	if !uuidPattern.MatchString(courseID) {
 		return ErrCourseNotFound
 	}
-	err := s.courseRepo.SoftDelete(ctx, courseID, user.ID)
+	err := s.courseRepo.SoftDelete(ctx, courseID, user.ID, videoResweepAfter())
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrCourseNotFound
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	s.videoFiles.StartFileCleanup()
+	return nil
 }
 
 // ownedCourse loads a course the user owns. Anything else looks like a missing course.

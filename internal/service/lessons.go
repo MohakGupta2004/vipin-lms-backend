@@ -21,13 +21,15 @@ type LessonService struct {
 	lessonRepo *models.LessonRepository
 	noteRepo   *models.NoteRepository
 	store      storage.PDFStore
+	videoFiles videoFileCleaner
 }
 
-func NewLessonService(lessonRepo *models.LessonRepository, noteRepo *models.NoteRepository, store storage.PDFStore) *LessonService {
+func NewLessonService(lessonRepo *models.LessonRepository, noteRepo *models.NoteRepository, store storage.PDFStore, videoFiles videoFileCleaner) *LessonService {
 	return &LessonService{
 		lessonRepo: lessonRepo,
 		noteRepo:   noteRepo,
 		store:      store,
+		videoFiles: videoFiles,
 	}
 }
 
@@ -196,7 +198,7 @@ func (s *LessonService) UpdateLesson(ctx context.Context, user *models.User, les
 	return lesson, nil
 }
 
-// DeleteLesson lets the course owner (instructor or admin) delete a lesson. Its notes and their PDF
+// DeleteLesson lets the course owner (instructor or admin) delete a lesson. Its notes and videos and their
 // files are removed (files another batch still uses are kept); its quizzes are hidden but students' attempts are kept.
 func (s *LessonService) DeleteLesson(ctx context.Context, user *models.User, lessonID string) error {
 	if _, err := s.ownedLesson(ctx, user, lessonID); err != nil {
@@ -214,13 +216,14 @@ func (s *LessonService) DeleteLesson(ctx context.Context, user *models.User, les
 		}
 	}
 
-	objectKeys, err := s.lessonRepo.DeleteLesson(ctx, lessonID)
+	objectKeys, err := s.lessonRepo.DeleteLesson(ctx, lessonID, videoResweepAfter())
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrLessonNotFound
 	}
 	if err != nil {
 		return err
 	}
+	s.videoFiles.StartFileCleanup()
 	for _, key := range objectKeys {
 		deleteUnusedPDF(ctx, s.noteRepo, s.store, key)
 	}

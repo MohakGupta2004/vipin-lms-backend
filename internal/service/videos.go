@@ -309,10 +309,7 @@ func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, video
 	if !s.store.Enabled() {
 		return ErrStorageDisabled
 	}
-	// A browser may still be uploading into the folder of an 'uploading' video (another tab, or a cancel racing
-	// the last files). Its form stops working when it expires and can't be renewed for a deleted video, so a
-	// second pass after that catches whatever landed in between.
-	busy, err := s.videoRepo.Delete(ctx, video.ID, storage.HLSUploadFormExpiry()+time.Minute)
+	busy, err := s.videoRepo.Delete(ctx, video.ID, videoResweepAfter())
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrVideoNotFound
 	}
@@ -322,9 +319,28 @@ func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, video
 	if busy {
 		return ErrVideoProcessing
 	}
-	// The request is over by the time the files are gone; hourly maintenance retries whatever this misses.
-	go s.removeDeletedFiles(context.Background())
+	s.StartFileCleanup()
 	return nil
+}
+
+// videoResweepAfter is when a deleted video's folder is emptied a second time if the video was still
+// 'uploading': a browser may still be sending files (another tab, or a cancel racing the last files). Its
+// form stops working when it expires and can't be renewed for a deleted video, so this pass is the last.
+func videoResweepAfter() time.Duration {
+	return storage.HLSUploadFormExpiry() + time.Minute
+}
+
+// videoFileCleaner starts removing the files of videos whose rows were just deleted (see VideoService).
+type videoFileCleaner interface {
+	StartFileCleanup()
+}
+
+// StartFileCleanup empties the queued folders of deleted videos in the background, since the request is
+// over long before a large folder is. Hourly maintenance retries whatever it misses.
+func (s *VideoService) StartFileCleanup() {
+	if s.store.Enabled() {
+		go s.removeDeletedFiles(context.Background())
+	}
 }
 
 // videoFolder is the folder holding all of a video's files: courses/{course}/videos/{video}/ (source + hls/)

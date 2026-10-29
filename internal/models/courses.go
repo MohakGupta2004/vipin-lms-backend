@@ -297,14 +297,23 @@ func (r *CourseRepository) UpdateCourse(ctx context.Context, c *Course, instruct
 		c.ExamID, c.Title, c.Slug, c.ShortDescription, c.Description, c.IsFree, c.ID, instructorID), c)
 }
 
-// SoftDelete marks a course deleted, but only if it belongs to this instructor.
+// SoftDelete marks a course deleted, but only if it belongs to this instructor, and in the same statement
+// deletes its videos and queues their folders for removal (see VideoRepository.Delete for resweepAfter).
 // It returns sql.ErrNoRows when the course does not exist or is not theirs.
-func (r *CourseRepository) SoftDelete(ctx context.Context, courseID, instructorID string) error {
+func (r *CourseRepository) SoftDelete(ctx context.Context, courseID, instructorID string, resweepAfter time.Duration) error {
 	var id string
-	query := `UPDATE courses SET deleted_at = now()
-		WHERE id = $1 AND instructor_id = $2 AND deleted_at IS NULL
-		RETURNING id`
-	return r.db.QueryRowContext(ctx, query, courseID, instructorID).Scan(&id)
+	query := `WITH course AS (
+			UPDATE courses SET deleted_at = now()
+			WHERE id = $1 AND instructor_id = $2 AND deleted_at IS NULL
+			RETURNING id
+		), gone AS (
+			DELETE FROM videos
+			WHERE course_id IN (SELECT id FROM course)
+			   OR lesson_id IN (SELECT l.id FROM lessons l JOIN course c ON c.id = l.course_id)
+			RETURNING status, original_key
+		), ` + queueDeletedVideoFiles("$3") + `
+		SELECT id FROM course`
+	return r.db.QueryRowContext(ctx, query, courseID, instructorID, resweepAfter.Seconds()).Scan(&id)
 }
 
 // UpdateStatus changes the status of a course, but only if it belongs to this instructor.

@@ -101,10 +101,13 @@ func main() {
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
 
+	// deleting a course or lesson deletes its videos, so those services start the videos' file cleanup
+	videoService := service.NewVideoService(videoRepo, lessonRepo, videoStore, cdnSigner)
+
 	postService := service.NewPostService(postRepo)
-	courseService := service.NewCourseService(courseRepo)
+	courseService := service.NewCourseService(courseRepo, videoService)
 	enrollmentService := service.NewEnrollmentService(enrollmentRepo)
-	lessonService := service.NewLessonService(lessonRepo, noteRepo, pdfStore)
+	lessonService := service.NewLessonService(lessonRepo, noteRepo, pdfStore, videoService)
 	noteService := service.NewNoteService(noteRepo, lessonRepo, pdfStore)
 	quizService := service.NewQuizService(quizRepo, lessonRepo)
 	flashcardService := service.NewFlashcardService(flashcardRepo, lessonRepo)
@@ -112,7 +115,6 @@ func main() {
 	learningService := service.NewLearningService(learningRepo)
 	studentService := service.NewStudentService(studentRepo)
 
-	videoService := service.NewVideoService(videoRepo, lessonRepo, videoStore, cdnSigner)
 	// removes abandoned video uploads in the background; returns at once when GCS is disabled
 	videoMaintenanceDone := make(chan struct{})
 	go func() {

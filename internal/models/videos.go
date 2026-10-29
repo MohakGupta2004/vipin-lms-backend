@@ -242,12 +242,7 @@ func (r *VideoRepository) Delete(ctx context.Context, id string, resweepAfter ti
 	var status string
 	err = r.db.QueryRowContext(ctx, `WITH gone AS (
 			DELETE FROM videos WHERE id = $1 AND status <> 'processing' RETURNING status, original_key
-		), queued AS (
-			INSERT INTO video_file_deletions (original_key, run_after)
-			SELECT original_key, now() FROM gone
-			UNION ALL
-			SELECT original_key, now() + make_interval(secs => $2) FROM gone WHERE status = 'uploading'
-		)
+		), `+queueDeletedVideoFiles("$2")+`
 		SELECT status FROM gone`, id, resweepAfter.Seconds()).Scan(&status)
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
@@ -338,6 +333,20 @@ func (r *VideoRepository) FilesInUse(ctx context.Context, originalKey string) (b
 	var inUse bool
 	err := r.db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM videos WHERE original_key = $1)", originalKey).Scan(&inUse)
 	return inUse, err
+}
+
+// queueDeletedVideoFiles is the CTE that follows one named gone, which deleted videos RETURNING status and
+// original_key: it queues each video's folder for removal (see ClaimFileDeletion), and queues a video still
+// being written (uploading, or processing by the old transcoder) again resweepParam seconds later, for files
+// that land after the first pass.
+func queueDeletedVideoFiles(resweepParam string) string {
+	return `queued AS (
+			INSERT INTO video_file_deletions (original_key, run_after)
+			SELECT original_key, now() FROM gone
+			UNION ALL
+			SELECT original_key, now() + make_interval(secs => ` + resweepParam + `) FROM gone
+			WHERE status IN ('uploading', 'processing')
+		)`
 }
 
 // FileDeletion is a deleted video's folder waiting to be emptied, named by the video's original_key.

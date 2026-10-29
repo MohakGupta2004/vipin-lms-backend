@@ -136,10 +136,11 @@ func (r *LessonRepository) UpdateLesson(ctx context.Context, l *Lesson) error {
 			&l.IsFree, &l.IsPublished, &l.Position, &l.CreatedAt)
 }
 
-// DeleteLesson removes a lesson in one transaction: its notes are deleted, its quizzes and the lesson
-// itself are soft-deleted (so students' quiz attempts are kept). It returns the storage keys of the
-// deleted notes' files for the caller to remove, or sql.ErrNoRows if the lesson does not exist.
-func (r *LessonRepository) DeleteLesson(ctx context.Context, lessonID string) (objectKeys []string, err error) {
+// DeleteLesson removes a lesson in one transaction: its notes and videos are deleted, its quizzes and the
+// lesson itself are soft-deleted (so students' quiz attempts are kept). The videos' folders are queued for
+// removal (see VideoRepository.Delete for resweepAfter). It returns the storage keys of the deleted notes'
+// files for the caller to remove, or sql.ErrNoRows if the lesson does not exist.
+func (r *LessonRepository) DeleteLesson(ctx context.Context, lessonID string, resweepAfter time.Duration) (objectKeys []string, err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -170,6 +171,14 @@ func (r *LessonRepository) DeleteLesson(ctx context.Context, lessonID string) (o
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	_, err = tx.ExecContext(ctx, `WITH gone AS (
+			DELETE FROM videos WHERE lesson_id = $1 RETURNING status, original_key
+		), `+queueDeletedVideoFiles("$2")+`
+		SELECT count(*) FROM gone`, lessonID, resweepAfter.Seconds())
+	if err != nil {
 		return nil, err
 	}
 
