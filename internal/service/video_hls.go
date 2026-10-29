@@ -180,8 +180,9 @@ func deleteStrayFiles(store storage.VideoStore, objects []string) {
 	}
 }
 
-// RunMaintenance removes abandoned browser uploads and settles videos the old server-side transcoder left
-// 'processing', once at start and then every hour, until ctx is cancelled.
+// RunMaintenance removes abandoned browser uploads, empties the bucket folders of deleted videos and settles
+// videos the old server-side transcoder left 'processing', once at start and then every hour, until ctx is
+// cancelled.
 func (s *VideoService) RunMaintenance(ctx context.Context) {
 	if !s.store.Enabled() {
 		return
@@ -191,6 +192,7 @@ func (s *VideoService) RunMaintenance(ctx context.Context) {
 	for {
 		s.settleLegacyTranscodes(ctx)
 		s.sweepAbandonedUploads(ctx)
+		s.removeDeletedFiles(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -199,8 +201,8 @@ func (s *VideoService) RunMaintenance(ctx context.Context) {
 	}
 }
 
-// sweepAbandonedUploads deletes videos whose browser stopped uploading (tab closed, laptop gone) together with
-// whatever files they had uploaded, so partial uploads don't pile up in the bucket.
+// sweepAbandonedUploads deletes videos whose browser stopped uploading (tab closed, laptop gone) and queues
+// whatever files they had uploaded for removal, so partial uploads don't pile up in the bucket.
 func (s *VideoService) sweepAbandonedUploads(ctx context.Context) {
 	videos, err := s.videoRepo.ListStaleUploads(ctx, abandonedUploadAfter, maintenanceBatch)
 	if err != nil {
@@ -223,10 +225,6 @@ func (s *VideoService) sweepAbandonedUploads(ctx context.Context) {
 			return
 		}
 		slog.Info("removed abandoned video upload", "video", v.ID)
-		if inUse, err := s.videoRepo.FilesInUse(ctx, v.OriginalKey); err != nil || inUse {
-			continue
-		}
-		deleteVideoFiles(s.store, videoFolder(v))
 	}
 }
 

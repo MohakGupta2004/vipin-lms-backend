@@ -34,6 +34,8 @@ const (
 	// videoCleanupTimeout bounds removing a deleted video's files: one source file plus every HLS segment,
 	// up to maxHLSFiles for a long browser-transcoded video.
 	videoCleanupTimeout = 10 * time.Minute
+	// fileDeletionLease is how long a worker holds a queued folder; longer than emptying one can take.
+	fileDeletionLease = videoCleanupTimeout + 5*time.Minute
 )
 
 // playlistNamePattern is a playlist file directly inside a video's hls/ folder, e.g. "media-sd.m3u8".
@@ -295,8 +297,9 @@ func (s *VideoService) UpdateVideo(ctx context.Context, user *models.User, video
 }
 
 // DeleteVideo lets the person who uploaded a video (and still owns its course) delete it: the row goes at once,
-// then its files are removed from the bucket in the background, unless a copy of the video in another batch
-// still uses them. A video the old server-side transcoder is still on can't be deleted.
+// then all its files (every rendition, its audio, its playlists) are removed from the bucket in the background,
+// unless a copy of the video in another batch still uses them. A video the old server-side transcoder is still
+// on can't be deleted.
 func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, videoID string) error {
 	video, err := s.ownedVideo(ctx, user, videoID)
 	if err != nil {
@@ -306,7 +309,10 @@ func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, video
 	if !s.store.Enabled() {
 		return ErrStorageDisabled
 	}
-	busy, err := s.videoRepo.Delete(ctx, video.ID)
+	// A browser may still be uploading into the folder of an 'uploading' video (another tab, or a cancel racing
+	// the last files). Its form stops working when it expires and can't be renewed for a deleted video, so a
+	// second pass after that catches whatever landed in between.
+	busy, err := s.videoRepo.Delete(ctx, video.ID, storage.HLSUploadFormExpiry()+time.Minute)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrVideoNotFound
 	}
@@ -316,44 +322,59 @@ func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, video
 	if busy {
 		return ErrVideoProcessing
 	}
-	// Batches copied from one course share their recordings; the files stay while another copy uses them.
-	inUse, err := s.videoRepo.FilesInUse(ctx, video.OriginalKey)
-	if err != nil {
-		slog.Error("could not check whether video files are still used; keeping them", "video", video.ID, "err", err)
-		return nil
-	}
-	if !inUse {
-		go deleteVideoFiles(s.store, videoFolder(video))
-		if video.Status == "uploading" {
-			// A browser may still be uploading into the folder (another tab, or a cancel racing the last
-			// files). Its form stops working when it expires and can't be renewed for a deleted video, so a
-			// second sweep after that catches whatever landed in between.
-			scheduleFileSweep(s.store, videoFolder(video), storage.HLSUploadFormExpiry()+time.Minute)
-		}
-	}
+	// The request is over by the time the files are gone; hourly maintenance retries whatever this misses.
+	go s.removeDeletedFiles(context.Background())
 	return nil
 }
 
 // videoFolder is the folder holding all of a video's files: courses/{course}/videos/{video}/ (source + hls/)
 // for server-transcoded videos, the hls/ folder itself for browser-transcoded ones.
-func videoFolder(video *models.Video) string {
-	return path.Dir(video.OriginalKey) + "/"
+func videoFolder(originalKey string) string {
+	return path.Dir(originalKey) + "/"
 }
 
-// scheduleFileSweep deletes a folder again after delay, best effort: a restart in between skips it, and the
-// files it would have caught stay as orphans.
-func scheduleFileSweep(store storage.VideoStore, prefix string, delay time.Duration) {
-	time.AfterFunc(delay, func() { deleteVideoFiles(store, prefix) })
+// removeDeletedFiles empties the queued folders of deleted videos that are due, one at a time, unless a copy of
+// the video in another batch still uses them. A folder stays queued until it is empty: one that fails, or
+// whose worker stops (timeout, restart), is claimed again once its lease runs out. Several workers, here or
+// on other instances, may run at once; each claims different folders.
+func (s *VideoService) removeDeletedFiles(ctx context.Context) {
+	for range maintenanceBatch {
+		job, err := s.videoRepo.ClaimFileDeletion(ctx, fileDeletionLease)
+		if errors.Is(err, sql.ErrNoRows) {
+			return
+		}
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("claim video folder to delete failed", "err", err)
+			}
+			return
+		}
+		folder := videoFolder(job.OriginalKey)
+		// Batches copied from one course share their recordings; the files stay while another copy uses them.
+		inUse, err := s.videoRepo.FilesInUse(ctx, job.OriginalKey)
+		if err != nil {
+			slog.Error("could not check whether video files are still used; retrying later", "prefix", folder, "err", err)
+			continue
+		}
+		if !inUse {
+			if err := deleteVideoFiles(s.store, folder); err != nil {
+				slog.Error("failed to delete stored video files; retrying later", "prefix", folder, "err", err)
+				continue
+			}
+		}
+		if err := s.videoRepo.FinishFileDeletion(ctx, job.ID); err != nil {
+			// The folder is empty; emptying it again when the lease runs out costs one listing.
+			slog.Error("could not mark video folder deleted", "prefix", folder, "err", err)
+		}
+	}
 }
 
-// deleteVideoFiles removes a deleted video's folder on a best-effort basis; a failure only leaves orphan files.
-// It uses a fresh context because the request is over by the time it runs.
-func deleteVideoFiles(store storage.VideoStore, prefix string) {
+// deleteVideoFiles removes every object in a deleted video's folder. It uses its own timeout so a large
+// folder isn't cut short by the caller's context.
+func deleteVideoFiles(store storage.VideoStore, prefix string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), videoCleanupTimeout)
 	defer cancel()
-	if err := store.DeletePrefix(ctx, prefix); err != nil {
-		slog.Error("failed to delete stored video files", "prefix", prefix, "err", err)
-	}
+	return store.DeletePrefix(ctx, prefix)
 }
 
 // GetVideo returns a video to the person who uploaded it, if they still own its course.

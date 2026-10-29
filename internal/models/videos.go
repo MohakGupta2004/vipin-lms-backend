@@ -188,10 +188,18 @@ func (r *VideoRepository) ListStaleUploads(ctx context.Context, idle time.Durati
 }
 
 // DeleteStaleUpload removes a video that is still 'uploading' and still idle for longer than idle, so a
-// browser that renewed its upload in the meantime keeps it. It returns sql.ErrNoRows if nothing was deleted.
+// browser that renewed its upload in the meantime keeps it, and queues its folder for removal (see
+// ClaimFileDeletion). It returns sql.ErrNoRows if nothing was deleted.
 func (r *VideoRepository) DeleteStaleUpload(ctx context.Context, id string, idle time.Duration) error {
-	return r.mustAffect(ctx, `DELETE FROM videos
-		WHERE id = $1 AND status = 'uploading' AND updated_at < now() - make_interval(secs => $2)`, id, idle.Seconds())
+	var key string
+	return r.db.QueryRowContext(ctx, `WITH gone AS (
+			DELETE FROM videos
+			WHERE id = $1 AND status = 'uploading' AND updated_at < now() - make_interval(secs => $2)
+			RETURNING original_key
+		), queued AS (
+			INSERT INTO video_file_deletions (original_key) SELECT original_key FROM gone
+		)
+		SELECT original_key FROM gone`, id, idle.Seconds()).Scan(&key)
 }
 
 // MarkReady finishes a video the old server-side transcoder was working on.
@@ -228,9 +236,19 @@ func (r *VideoRepository) ListProcessing(ctx context.Context) ([]Video, error) {
 
 // Delete removes a video row; its progress and shares go with it (ON DELETE CASCADE). It returns sql.ErrNoRows
 // if the video does not exist, and leaves a video the old server-side transcoder is still on alone (busy = true).
-func (r *VideoRepository) Delete(ctx context.Context, id string) (busy bool, err error) {
+// The video's folder is queued for removal in the same statement (see ClaimFileDeletion); a video still
+// 'uploading' is queued a second time, resweepAfter later, for files a browser was still sending.
+func (r *VideoRepository) Delete(ctx context.Context, id string, resweepAfter time.Duration) (busy bool, err error) {
 	var status string
-	err = r.db.QueryRowContext(ctx, `DELETE FROM videos WHERE id = $1 AND status <> 'processing' RETURNING status`, id).Scan(&status)
+	err = r.db.QueryRowContext(ctx, `WITH gone AS (
+			DELETE FROM videos WHERE id = $1 AND status <> 'processing' RETURNING status, original_key
+		), queued AS (
+			INSERT INTO video_file_deletions (original_key, run_after)
+			SELECT original_key, now() FROM gone
+			UNION ALL
+			SELECT original_key, now() + make_interval(secs => $2) FROM gone WHERE status = 'uploading'
+		)
+		SELECT status FROM gone`, id, resweepAfter.Seconds()).Scan(&status)
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
@@ -320,4 +338,31 @@ func (r *VideoRepository) FilesInUse(ctx context.Context, originalKey string) (b
 	var inUse bool
 	err := r.db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM videos WHERE original_key = $1)", originalKey).Scan(&inUse)
 	return inUse, err
+}
+
+// FileDeletion is a deleted video's folder waiting to be emptied, named by the video's original_key.
+type FileDeletion struct {
+	ID          int64
+	OriginalKey string
+}
+
+// ClaimFileDeletion takes the oldest queued folder that is due and hides it from other workers for lease. A
+// worker that dies holding it leaves it to be claimed again once the lease runs out. It returns sql.ErrNoRows
+// if nothing is due.
+func (r *VideoRepository) ClaimFileDeletion(ctx context.Context, lease time.Duration) (*FileDeletion, error) {
+	var d FileDeletion
+	err := r.db.QueryRowContext(ctx, `UPDATE video_file_deletions SET run_after = now() + make_interval(secs => $1)
+		WHERE id = (SELECT id FROM video_file_deletions WHERE run_after <= now()
+			ORDER BY run_after LIMIT 1 FOR UPDATE SKIP LOCKED)
+		RETURNING id, original_key`, lease.Seconds()).Scan(&d.ID, &d.OriginalKey)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// FinishFileDeletion drops a queued folder once it is empty (or still used by another copy of the video).
+func (r *VideoRepository) FinishFileDeletion(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM video_file_deletions WHERE id = $1`, id)
+	return err
 }
