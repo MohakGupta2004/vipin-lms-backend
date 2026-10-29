@@ -55,12 +55,10 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:?set EMAIL_FROM in .env}
       EMAIL_RATE_PER_SEC: ${EMAIL_RATE_PER_SEC:-2}
 
-      # Google Cloud: PDF/video storage, transcoding and signed CDN URLs. Off unless GCS_ENABLE=true,
+      # Google Cloud: PDF/video storage and signed CDN URLs. Off unless GCS_ENABLE=true,
       # which then requires every variable below.
       GCS_ENABLE: ${GCS_ENABLE:-false}
       GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-vipin-lms}
-      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
-      TRANSCODER_LOCATION: ${TRANSCODER_LOCATION:-}
       CDN_DOMAIN: ${CDN_DOMAIN:-}
       CDN_KEY_NAME: ${CDN_KEY_NAME:-}
       CDN_SIGNING_KEY: ${CDN_SIGNING_KEY:-}

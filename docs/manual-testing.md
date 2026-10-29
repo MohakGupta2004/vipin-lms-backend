@@ -321,41 +321,52 @@ Quick checks that existing behaviour still works:
 - Admin: `GET /courses` (all courses), enrollment create, list and update.
 - `POST /auth/refresh` with a valid session → `202`.
 
-## 14. Video upload + transcoding (new)
+## 14. Video upload (transcoded in the instructor's browser)
 
-Requires `GCS_ENABLE=true`, `GCP_PROJECT_ID`, `TRANSCODER_LOCATION` (e.g. `asia-south1`, same region as the bucket).
+Requires `GCS_ENABLE=true`. There is no server-side transcoding: the instructor's browser (Chrome, Edge or Safari over HTTPS or localhost) converts the file with WebCodecs into an HLS ladder (1080p / 720p / 480p, never upscaled, keeping the recording's shape, H.264 + one shared AAC track, 6 s CMAF segments) and uploads each file straight to the bucket as soon as it is encoded. The source file is never uploaded.
 
 **One-time GCP setup**
 
-- Enable the Transcoder API.
-- API service account: `roles/transcoder.admin` plus object create/view on the bucket. Signing uses ADC (`GOOGLE_APPLICATION_CREDENTIALS` key, or `roles/iam.serviceAccountTokenCreator` on Cloud Run).
-- Transcoder service agent `service-<PROJECT_NUMBER>@gcp-sa-transcoder.iam.gserviceaccount.com`: `roles/storage.objectAdmin` on the bucket.
-- Bucket CORS: allow `PUT` from the frontend origin with headers `Content-Type`, `x-goog-content-length-range`.
+- API service account: object create/view/delete on the bucket. Signing uses ADC (`GOOGLE_APPLICATION_CREDENTIALS` key, or `roles/iam.serviceAccountTokenCreator` on itself on Cloud Run).
+- Bucket CORS must allow `POST` (browser uploads) as well as `GET`/`HEAD`: `gcloud storage buckets update gs://$GCS_BUCKET_NAME --cors-file=cors.json`. `cors.json` keeps reads (`GET`/`HEAD`, CDN playback) open to any origin, since segments need a signed URL anyway, and allows uploads (`POST`/`PUT`) only from the frontend origins listed in its second entry (`https://app.vipingarg.com` and `http://localhost:3001`). A new frontend origin must be added there, or its uploads are blocked. CORS is not access control: every upload still needs a signed form from the API.
+- The Transcoder API is no longer used and can be disabled (after every old `processing` video has settled, see below).
+
+**Layout** under `courses/<courseId>/videos/<videoId>/hls/`:
+
+```
+manifest.m3u8   720p.m3u8   480p.m3u8   audio.m3u8        (playlists, read by the API)
+720p/init.mp4   720p/seg-00001.m4s …   audio/init.mp4 …   (segments, served by the CDN)
+```
 
 **Flow** (instructor token)
 
-1. `POST /lessons/{id}/videos` with `{"fileName":"lecture.mp4","isFree":false}` → `201` with `video`, `uploadUrl`, `method`, `headers`, `expiresAt`.
-2. Send the returned `headers` unchanged (`Content-Type` follows the extension: mp4 `video/mp4`, mov `video/quicktime`, mkv `video/x-matroska`, webm `video/webm`):
-   `curl -X PUT -H "Content-Type: video/mp4" -H "x-goog-content-length-range: 0,5368709120" --upload-file sample.mp4 "<uploadUrl>"`
-3. `POST /videos/{id}/confirm` → `202`, status `processing`.
-4. Poll `GET /videos/{id}` until `ready`. If it ends `failed`, fix the cause and `POST /videos/{id}/retry` → `202` (reuses the uploaded file; `409` if not failed).
-    Check `gs://<bucket>/courses/<courseId>/videos/<videoId>/hls/manifest.m3u8` exists.
+1. `POST /lessons/{id}/videos` with `{"fileName":"lecture.mp4"}` → `201` with `video` (status `uploading`), `uploadUrl`, `method: POST`, `keyPrefix`, `fields` (one set per extension `.m3u8`, `.mp4`, `.m4s`), `maxFileBytes`, `expiresAt` (1 hour).
+2. Upload each file as multipart/form-data: the fields for its extension, then `key` = `keyPrefix` + path, then `file` last:
+   `curl -F "key=${keyPrefix}720p/seg-00001.m4s" -F policy=… -F x-goog-signature=… … -F file=@seg.m4s "$uploadUrl"` → `204`.
+3. `POST /videos/{id}/upload` → `200`, a fresh form (the browser does this before the hour is up, or after a `403`).
+4. `POST /videos/{id}/confirm` → `200`, status `ready`. The API lists the folder, reads the playlists and checks every referenced file is there with the right type; files no playlist uses are deleted.
 
 **Negative checks**
 
 - Student → `403`. Other instructor's lesson/video → `404`.
-- Confirm before PUT → `400` "video file not uploaded yet". Confirm twice → `409`.
+- Confirm before uploading → `400` "video files not uploaded yet". Confirm with a segment missing → `400` "uploaded video is missing 720p/seg-00002.m4s"; the video stays `uploading`. Confirm twice → `409`.
+- Upload with a `key` outside `keyPrefix`, a `.m4s` with the `.m3u8` fields, or a file over 64 MB → GCS `403`/`400`.
 - `fileName` ending `.exe` → `400`.
-- PUT with wrong `Content-Type` → GCS `403`.
+- `POST /videos/{id}/upload` on a ready video → `409`.
 - `GCS_ENABLE=false` → `503`.
-- Restart the server mid-transcode → video still reaches `ready` (same job is polled).
+
+**Cleanup**
+
+- Deleting an `uploading` video removes its folder at once and again an hour later, catching files a still-open tab uploaded meanwhile.
+- An `uploading` video that has not renewed its form for 24 hours (tab closed, laptop gone) is deleted with its files by an hourly sweep.
+- Videos the old server-side transcoder left `processing` are settled by the same sweep: `ready` when `hls/manifest.m3u8` exists, `failed` after 3 hours without it.
 
 ### Streaming (signed Cloud CDN URLs)
 
 Requires `CDN_DOMAIN`, `CDN_KEY_NAME`, `CDN_SIGNING_KEY`. CDN backend bucket = `GCS_BUCKET_NAME` (stays private). Apply CORS: `gcloud storage buckets update gs://$GCS_BUCKET_NAME --cors-file=cors.json`, then invalidate CDN cache for `/courses/*`.
 
-- `GET /videos/{id}/stream` → `{manifestUrl, queryParams, expiresAt}` (15 min, `Cache-Control: no-store`).
-- `GET /videos/{id}/hls/{file}.m3u8?<signature>` → public (no cookie), any origin. Checks the signature, reads the playlist from the bucket and rewrites every line to a signed URL: child playlists point back at this route, `.ts` segments go straight to the CDN. Bad/expired signature → `403`.
+- `GET /videos/{id}/stream` → `{manifestUrl, queryParams, expiresAt, resumeAt, nativeAspect}` (15 min, `Cache-Control: no-store`). `nativeAspect` is `false` for older server-transcoded videos, which were stretched to 16:9.
+- `GET /videos/{id}/hls/{file}.m3u8?<signature>` → public (no cookie), any origin. Checks the signature, reads the playlist from the bucket and rewrites every line to a signed URL: child playlists point back at this route, segments (`.ts` for older videos, `.m4s`/`init.mp4` for newer ones) go straight to the CDN. Bad/expired signature → `403`.
 - Access: free video (`videos.is_free` or `lessons.is_free`) in published course + published lesson → any logged-in user. Else course owner or enrolled student. Students never see non-ready videos or unpublished lessons (`404`). Owner streaming a non-ready video → `409`.
 
 ```
@@ -388,7 +399,7 @@ curl -b student.jar $B/videos/$VID/stream          # resumeAt 754, manifestUrl .
 curl -s "$manifestUrl" | head -2                    # #EXTM3U / #EXT-X-START:TIME-OFFSET=754,PRECISE=YES
 ```
 
-Known limits: videos stuck in `uploading` are not cleaned up (add a bucket lifecycle rule); `duration_sec` stays NULL; `CDN_DOMAIN` as plain `http://` exposes the signed query on the network, and an `https://` page will block `http://` segments (mixed content), so use HTTPS for both API and CDN in prod.
+Known limits: `duration_sec` stays NULL; `CDN_DOMAIN` as plain `http://` exposes the signed query on the network, and an `https://` page will block `http://` segments (mixed content), so use HTTPS for both API and CDN in prod.
 
 ## 15. Flashcards (new)
 

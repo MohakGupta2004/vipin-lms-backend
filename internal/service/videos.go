@@ -43,41 +43,37 @@ var (
 	ErrVideoNotFound = errors.New("video not found")
 	// ErrVideoNotAwaitingUpload means the video is no longer in the 'uploading' state.
 	ErrVideoNotAwaitingUpload = errors.New("video is not awaiting upload")
-	// ErrVideoNotFailed means only a failed video can be retried.
-	ErrVideoNotFailed = errors.New("only a failed video can be retried")
-	// ErrVideoProcessing means the video is being transcoded and can't be deleted until that ends.
+	// ErrVideoProcessing means the old server-side transcoder is still on the video; it can't be deleted until that ends.
 	ErrVideoProcessing = errors.New("video is still processing; delete it once it is ready or has failed")
-	// ErrVideoNotReady means the owner asked to stream a video that has not finished transcoding.
+	// ErrVideoNotReady means the owner asked to stream a video that has not finished uploading.
 	ErrVideoNotReady = errors.New("video is not ready to stream yet")
 	// ErrBadStreamSignature means a playlist request has a missing, tampered or expired signature.
 	ErrBadStreamSignature = errors.New("stream link is invalid or expired")
-	// ErrTranscodeQueueBusy means the video could not be queued for transcoding. The client can retry confirm.
-	ErrTranscodeQueueBusy = errors.New("transcoding queue is busy, try again shortly")
 )
-
-// TranscodeEnqueuer queues a confirmed video for transcoding.
-type TranscodeEnqueuer interface {
-	Enqueue(ctx context.Context, videoID string) error
-}
 
 type VideoService struct {
 	videoRepo  *models.VideoRepository
 	lessonRepo *models.LessonRepository
 	store      storage.VideoStore
-	queue      TranscodeEnqueuer
 	signer     *cdn.Signer // nil when GCS is disabled
 }
 
-func NewVideoService(videoRepo *models.VideoRepository, lessonRepo *models.LessonRepository, store storage.VideoStore, queue TranscodeEnqueuer, signer *cdn.Signer) *VideoService {
-	return &VideoService{videoRepo: videoRepo, lessonRepo: lessonRepo, store: store, queue: queue, signer: signer}
+func NewVideoService(videoRepo *models.VideoRepository, lessonRepo *models.LessonRepository, store storage.VideoStore, signer *cdn.Signer) *VideoService {
+	return &VideoService{videoRepo: videoRepo, lessonRepo: lessonRepo, store: store, signer: signer}
 }
 
-// VideoUpload is a new video row plus the signed URL the browser must PUT the file to.
+// VideoUpload is a video waiting for its files plus the signed form the browser uploads them with.
 type VideoUpload struct {
-	Video     *models.Video
-	URL       string
-	Headers   map[string]string
-	ExpiresAt time.Time
+	Video *models.Video
+	// URL is where every file is POSTed as multipart/form-data.
+	URL string
+	// KeyPrefix is the folder every uploaded file's "key" must start with: the video's hls/ folder.
+	KeyPrefix string
+	// Fields holds, per file extension (".m3u8", ".mp4", ".m4s"), the form fields to send with that file.
+	Fields map[string]map[string]string
+	// MaxFileBytes is the largest single file the form accepts.
+	MaxFileBytes int64
+	ExpiresAt    time.Time
 }
 
 // UpdateVideoInput holds the video fields to change. Nil fields are left as they are.
@@ -106,8 +102,10 @@ func validateVideoDescription(description string) error {
 }
 
 // RequestUpload lets the course owner start a video upload on a lesson of their course.
-// It creates the video row ('uploading') and returns a signed PUT URL straight to the bucket.
-// kind is offline (the default) or meet; tiers lists who can watch it (nil = the kind's default).
+// The instructor's browser transcodes the file to HLS itself, so the source is never uploaded: this creates
+// the video row ('uploading') and returns a signed form that lets the browser POST the HLS files straight into
+// the video's own hls/ folder. kind is offline (the default) or meet; tiers lists who can watch it
+// (nil = the kind's default).
 func (s *VideoService) RequestUpload(ctx context.Context, user *models.User, lessonID, fileName, description, kind string, tiers []string) (*VideoUpload, error) {
 	if !user.CanTeach() {
 		return nil, ErrForbidden
@@ -133,22 +131,12 @@ func (s *VideoService) RequestUpload(ctx context.Context, user *models.User, les
 	if err != nil {
 		return nil, err
 	}
-	name, ext, contentType, err := validateVideoFileName(fileName)
+	name, err := validateVideoFileName(fileName)
 	if err != nil {
 		return nil, err
 	}
 
 	id := uuid.NewString()
-	key := path.Join("courses", lesson.CourseID, "videos", id, "source"+ext)
-
-	// Sign before inserting so a signing error leaves no row behind.
-	expires := storage.VideoUploadURLExpiry()
-	url, headers, err := s.store.SignedUploadURL(key, contentType, storage.MaxVideoSize, expires)
-	if err != nil {
-		return nil, err
-	}
-	expiresAt := time.Now().Add(expires)
-
 	video := &models.Video{
 		ID:          id,
 		LessonID:    lesson.ID,
@@ -158,104 +146,108 @@ func (s *VideoService) RequestUpload(ctx context.Context, user *models.User, les
 		Description: description,
 		Kind:        kind,
 		Tiers:       tiers,
-		OriginalKey: key,
+		OriginalKey: path.Join("courses", lesson.CourseID, "videos", id, "hls", hlsManifestName),
+	}
+	// Sign before inserting so a signing error leaves no row behind.
+	up, err := s.uploadForm(video)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.videoRepo.Create(ctx, video); err != nil {
 		return nil, err
 	}
-	return &VideoUpload{Video: video, URL: url, Headers: headers, ExpiresAt: expiresAt}, nil
+	return up, nil
 }
 
-// ConfirmUpload checks the file reached the bucket and queues it for transcoding.
+// RenewUpload returns a fresh upload form for a video that is still 'uploading', for a browser whose form has
+// expired during a long job, or that is uploading the video again after a failed attempt.
+func (s *VideoService) RenewUpload(ctx context.Context, user *models.User, videoID string) (*VideoUpload, error) {
+	video, err := s.ownedVideo(ctx, user, videoID)
+	if err != nil {
+		return nil, err
+	}
+	if video.Status != "uploading" || !browserTranscoded(video) {
+		return nil, ErrVideoNotAwaitingUpload
+	}
+	if !s.store.Enabled() {
+		return nil, ErrStorageDisabled
+	}
+	up, err := s.uploadForm(video)
+	if err != nil {
+		return nil, err
+	}
+	// Marks the upload as alive, so the abandoned-upload sweep leaves it alone.
+	if err := s.videoRepo.TouchUpload(ctx, video.ID); errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrVideoNotAwaitingUpload
+	} else if err != nil {
+		return nil, err
+	}
+	return up, nil
+}
+
+// uploadForm signs one POST policy per HLS file type, each limited to the video's hls/ folder.
+func (s *VideoService) uploadForm(video *models.Video) (*VideoUpload, error) {
+	prefix := hlsFolder(video)
+	expires := storage.HLSUploadFormExpiry()
+	up := &VideoUpload{
+		Video:        video,
+		KeyPrefix:    prefix,
+		Fields:       map[string]map[string]string{},
+		MaxFileBytes: storage.MaxHLSFileSize,
+		ExpiresAt:    time.Now().Add(expires),
+	}
+	for _, ext := range storage.HLSExtensions() {
+		contentType, _ := storage.HLSContentType(ext)
+		// Segments never change once written (every video has its own folder), so browsers may keep them.
+		cacheControl := "public, max-age=31536000, immutable"
+		if ext == ".m3u8" {
+			cacheControl = "" // playlists are read by the API, never cached
+		}
+		form, err := s.store.SignedUploadForm(prefix, contentType, cacheControl, storage.MaxHLSFileSize, expires)
+		if err != nil {
+			return nil, err
+		}
+		up.URL = form.URL
+		up.Fields[ext] = form.Fields
+	}
+	return up, nil
+}
+
+// ConfirmUpload is called by the browser once every HLS file is uploaded. The files are untrusted: they are
+// checked (playlists parse, every referenced file exists with the right type, nothing points outside the
+// folder) before the video becomes 'ready'. Stray files from earlier attempts are removed. A failed check
+// leaves the video 'uploading', so the browser can upload it again.
 func (s *VideoService) ConfirmUpload(ctx context.Context, user *models.User, videoID string) (*models.Video, error) {
 	video, err := s.ownedVideo(ctx, user, videoID)
 	if err != nil {
 		return nil, err
 	}
-	if video.Status != "uploading" {
+	if video.Status != "uploading" || !browserTranscoded(video) {
 		return nil, ErrVideoNotAwaitingUpload
 	}
 	if !s.store.Enabled() {
 		return nil, ErrStorageDisabled
 	}
 
-	size, contentType, err := s.store.ObjectInfo(ctx, video.OriginalKey)
-	if errors.Is(err, storage.ErrObjectNotFound) {
-		return nil, fmt.Errorf("%w: video file not uploaded yet", ErrInvalidInput)
-	}
+	prefix := hlsFolder(video)
+	files, err := checkUploadedHLS(ctx, s.store, prefix)
 	if err != nil {
 		return nil, err
-	}
-	wantType, _ := storage.VideoContentType(path.Ext(video.OriginalKey))
-	switch {
-	case size <= 0:
-		return nil, fmt.Errorf("%w: uploaded video file is empty", ErrInvalidInput)
-	case size > storage.MaxVideoSize:
-		return nil, fmt.Errorf("%w: video must be at most %d GB", ErrInvalidInput, storage.MaxVideoSize>>30)
-	case contentType != wantType:
-		return nil, fmt.Errorf("%w: uploaded video has the wrong content type", ErrInvalidInput)
 	}
 
 	// Atomic: of two concurrent confirms only one gets past this.
-	if err := s.videoRepo.MarkProcessing(ctx, video.ID, size); errors.Is(err, sql.ErrNoRows) {
+	if err := s.videoRepo.PublishUpload(ctx, video.ID, prefix, files.size); errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrVideoNotAwaitingUpload
 	} else if err != nil {
 		return nil, err
 	}
-
-	if err := s.queue.Enqueue(ctx, video.ID); err != nil {
-		slog.Error("enqueue transcode failed", "video", video.ID, "err", err)
-		revertCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
-		defer cancel()
-		if rerr := s.videoRepo.RevertToUploading(revertCtx, video.ID); rerr != nil {
-			slog.Error("revert video to uploading failed", "video", video.ID, "err", rerr)
-		}
-		return nil, ErrTranscodeQueueBusy
+	if len(files.stray) > 0 {
+		go deleteStrayFiles(s.store, files.stray)
 	}
 
-	video.Status = "processing"
-	video.SizeBytes = size
-	return video, nil
-}
-
-// RetryTranscode starts transcoding again for a failed video. The source file stays in the bucket,
-// so nothing is re-uploaded; a new Transcoder job replaces the failed one.
-func (s *VideoService) RetryTranscode(ctx context.Context, user *models.User, videoID string) (*models.Video, error) {
-	video, err := s.ownedVideo(ctx, user, videoID)
-	if err != nil {
-		return nil, err
-	}
-	if video.Status != "failed" {
-		return nil, ErrVideoNotFailed
-	}
-	if !s.store.Enabled() {
-		return nil, ErrStorageDisabled
-	}
-	if _, _, err := s.store.ObjectInfo(ctx, video.OriginalKey); errors.Is(err, storage.ErrObjectNotFound) {
-		return nil, fmt.Errorf("%w: source video file is missing, upload it again", ErrInvalidInput)
-	} else if err != nil {
-		return nil, err
-	}
-
-	// Atomic: of two concurrent retries only one gets past this.
-	if err := s.videoRepo.MarkRetrying(ctx, video.ID); errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrVideoNotFailed
-	} else if err != nil {
-		return nil, err
-	}
-
-	if err := s.queue.Enqueue(ctx, video.ID); err != nil {
-		slog.Error("enqueue transcode retry failed", "video", video.ID, "err", err)
-		revertCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
-		defer cancel()
-		if rerr := s.videoRepo.MarkFailed(revertCtx, video.ID, video.Error); rerr != nil {
-			slog.Error("revert video to failed failed", "video", video.ID, "err", rerr)
-		}
-		return nil, ErrTranscodeQueueBusy
-	}
-
-	video.Status = "processing"
-	video.Error = ""
+	video.Status = "ready"
+	video.SizeBytes = files.size
+	video.HLSPrefix = prefix
 	return video, nil
 }
 
@@ -302,9 +294,8 @@ func (s *VideoService) UpdateVideo(ctx context.Context, user *models.User, video
 }
 
 // DeleteVideo lets the person who uploaded a video (and still owns its course) delete it: the row goes at once,
-// then the source file and HLS folder are removed from the bucket in the background, unless a copy of the
-// video in another batch still uses them. A video that is still
-// transcoding can't be deleted, so the job never writes into a deleted folder.
+// then its files are removed from the bucket in the background, unless a copy of the video in another batch
+// still uses them. A video the old server-side transcoder is still on can't be deleted.
 func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, videoID string) error {
 	video, err := s.ownedVideo(ctx, user, videoID)
 	if err != nil {
@@ -331,10 +322,27 @@ func (s *VideoService) DeleteVideo(ctx context.Context, user *models.User, video
 		return nil
 	}
 	if !inUse {
-		// Everything of a video lives under its own folder: courses/{course}/videos/{video}/ (source + hls/).
-		go deleteVideoFiles(s.store, path.Dir(video.OriginalKey)+"/")
+		go deleteVideoFiles(s.store, videoFolder(video))
+		if video.Status == "uploading" {
+			// A browser may still be uploading into the folder (another tab, or a cancel racing the last
+			// files). Its form stops working when it expires and can't be renewed for a deleted video, so a
+			// second sweep after that catches whatever landed in between.
+			scheduleFileSweep(s.store, videoFolder(video), storage.HLSUploadFormExpiry()+time.Minute)
+		}
 	}
 	return nil
+}
+
+// videoFolder is the folder holding all of a video's files: courses/{course}/videos/{video}/ (source + hls/)
+// for server-transcoded videos, the hls/ folder itself for browser-transcoded ones.
+func videoFolder(video *models.Video) string {
+	return path.Dir(video.OriginalKey) + "/"
+}
+
+// scheduleFileSweep deletes a folder again after delay, best effort: a restart in between skips it, and the
+// files it would have caught stay as orphans.
+func scheduleFileSweep(store storage.VideoStore, prefix string, delay time.Duration) {
+	time.AfterFunc(delay, func() { deleteVideoFiles(store, prefix) })
 }
 
 // deleteVideoFiles removes a deleted video's folder on a best-effort basis; a failure only leaves orphan files.
@@ -356,11 +364,14 @@ func (s *VideoService) GetVideo(ctx context.Context, user *models.User, videoID 
 // playlist and segment URL inside already signed, so any HLS player can open it as-is.
 // QueryParams is the bare signature, for clients that want to build URLs themselves.
 // ResumeAt is where the user stopped last time, in seconds (0 = from the start).
+// NativeAspect is true when the renditions keep the recording's own shape; false for videos the old
+// server-side transcoder stretched to 16:9, which the player has to draw back at their recorded shape.
 type VideoStream struct {
-	ManifestURL string
-	QueryParams string
-	ExpiresAt   time.Time
-	ResumeAt    int
+	ManifestURL  string
+	QueryParams  string
+	ExpiresAt    time.Time
+	ResumeAt     int
+	NativeAspect bool
 }
 
 // StreamVideo returns a short-lived signed URL for a ready video the user may watch.
@@ -387,10 +398,11 @@ func (s *VideoService) StreamVideo(ctx context.Context, user *models.User, video
 		manifestURL += "&start=" + strconv.Itoa(resumeAt)
 	}
 	return &VideoStream{
-		ManifestURL: manifestURL,
-		QueryParams: query,
-		ExpiresAt:   expires,
-		ResumeAt:    resumeAt,
+		ManifestURL:  manifestURL,
+		QueryParams:  query,
+		ExpiresAt:    expires,
+		ResumeAt:     resumeAt,
+		NativeAspect: browserTranscoded(video),
 	}, nil
 }
 
@@ -664,10 +676,10 @@ func (s *VideoService) ownedVideo(ctx context.Context, user *models.User, videoI
 	return video, nil
 }
 
-// validateVideoFileName cleans a client-supplied file name and returns it with its extension (".mp4")
-// and the content type the upload must use. The name is only a display title, never part of the object key.
-func validateVideoFileName(fileName string) (name, ext, contentType string, err error) {
-	name = strings.ReplaceAll(fileName, "\\", "/")
+// validateVideoFileName cleans a client-supplied file name for use as the video's title. The name is only a
+// display title, never part of an object key. Only the containers browsers can read are accepted.
+func validateVideoFileName(fileName string) (string, error) {
+	name := strings.ReplaceAll(fileName, "\\", "/")
 	name = name[strings.LastIndex(name, "/")+1:]
 	name = strings.TrimSpace(strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f {
@@ -678,12 +690,11 @@ func validateVideoFileName(fileName string) (name, ext, contentType string, err 
 
 	n := utf8.RuneCountInString(name)
 	if n < 1 || n > maxVideoFileNameChars {
-		return "", "", "", fmt.Errorf("%w: fileName must be 1 to %d characters", ErrInvalidInput, maxVideoFileNameChars)
+		return "", fmt.Errorf("%w: fileName must be 1 to %d characters", ErrInvalidInput, maxVideoFileNameChars)
 	}
-	ext = strings.ToLower(path.Ext(name))
-	contentType, ok := storage.VideoContentType(ext)
-	if !ok {
-		return "", "", "", fmt.Errorf("%w: video must be .mp4, .mov, .mkv or .webm", ErrInvalidInput)
+	switch strings.ToLower(path.Ext(name)) {
+	case ".mp4", ".mov", ".mkv", ".webm":
+		return name, nil
 	}
-	return name, ext, contentType, nil
+	return "", fmt.Errorf("%w: video must be .mp4, .mov, .mkv or .webm", ErrInvalidInput)
 }

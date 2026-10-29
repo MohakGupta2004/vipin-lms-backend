@@ -1,3 +1,6 @@
-[{"origin": ["*"], "method": ["GET", "HEAD", "PUT"],
-  "responseHeader": ["Content-Type", "Content-Length", "Range", "x-goog-content-length-range"],
+[{"origin": ["*"], "method": ["GET", "HEAD"],
+  "responseHeader": ["Content-Type", "Content-Length", "Range"],
+  "maxAgeSeconds": 3600},
+ {"origin": ["https://app.vipingarg.com", "http://localhost:3001"], "method": ["PUT", "POST"],
+  "responseHeader": ["Content-Type", "Content-Length", "x-goog-content-length-range"],
   "maxAgeSeconds": 3600}]

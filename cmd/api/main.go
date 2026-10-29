@@ -21,7 +21,6 @@ import (
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/service"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/storage"
-	"github.com/MohakGupta2004/vipin-lms-backend/internal/transcoder"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "github.com/MohakGupta2004/vipin-lms-backend/docs"
@@ -67,9 +66,9 @@ func main() {
 		fmt.Println("GCS STORAGE DISABLED (set GCS_ENABLE=true to enable PDF uploads)")
 	}
 
-	// Video storage and transcoding follow the same switch.
+	// Video storage follows the same switch. Videos are transcoded in the instructor's browser, so the
+	// server only signs upload forms, checks the uploaded HLS files and signs playback URLs.
 	var videoStore storage.VideoStore = storage.DisabledVideoStore{}
-	var transcodeClient *transcoder.Client
 	var cdnSigner *cdn.Signer
 	if cfg.GCSEnabled {
 		cdnSigner, err = cdn.NewSigner(cfg.CDNDomain, cfg.CDNKeyName, cfg.CDNSigningKey)
@@ -77,10 +76,6 @@ func main() {
 			panic(err)
 		}
 		videoStore, err = storage.NewGCSVideoStore(ctx, cfg.GCSBucketName)
-		if err != nil {
-			panic(err)
-		}
-		transcodeClient, err = transcoder.New(ctx, cfg.GCPProjectID, cfg.TranscoderLocation)
 		if err != nil {
 			panic(err)
 		}
@@ -117,17 +112,13 @@ func main() {
 	learningService := service.NewLearningService(learningRepo)
 	studentService := service.NewStudentService(studentRepo)
 
-	// transcoding runs on an in-process queue; it stays unused (and nothing is enqueued) when GCS is disabled
-	var transcodeQueue *service.TranscodeQueue
-	if transcodeClient != nil {
-		transcodeQueue = service.NewTranscodeQueue(videoRepo, videoStore, transcodeClient)
-		transcodeQueue.Start(ctx)
-	}
-	var videoEnqueuer service.TranscodeEnqueuer = disabledEnqueuer{}
-	if transcodeQueue != nil {
-		videoEnqueuer = transcodeQueue
-	}
-	videoService := service.NewVideoService(videoRepo, lessonRepo, videoStore, videoEnqueuer, cdnSigner)
+	videoService := service.NewVideoService(videoRepo, lessonRepo, videoStore, cdnSigner)
+	// removes abandoned video uploads in the background; returns at once when GCS is disabled
+	videoMaintenanceDone := make(chan struct{})
+	go func() {
+		defer close(videoMaintenanceDone)
+		videoService.RunMaintenance(ctx)
+	}()
 
 	// emails are sent by a background worker pool so requests never wait on Resend
 	emailQueue := email.NewQueue(email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom, cfg.EmailRatePerSecond))
@@ -219,10 +210,10 @@ func main() {
 	mux.Handle("PATCH /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.UpdateNote)))
 	mux.Handle("DELETE /api/v1/notes/{id}", authMiddleware.RequireAuth(http.HandlerFunc(noteHandler.DeleteNote)))
 
-	// lesson videos (course owner uploads straight to the bucket, confirms, then polls until transcoded)
+	// lesson videos (course owner's browser transcodes to HLS, uploads straight to the bucket with a signed form, then confirms)
 	mux.Handle("POST /api/v1/lessons/{id}/videos", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.RequestUpload)))
+	mux.Handle("POST /api/v1/videos/{id}/upload", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.RenewUpload)))
 	mux.Handle("POST /api/v1/videos/{id}/confirm", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.ConfirmUpload)))
-	mux.Handle("POST /api/v1/videos/{id}/retry", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.RetryTranscode)))
 	mux.Handle("GET /api/v1/videos/{id}", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.GetVideo)))
 	mux.Handle("PATCH /api/v1/videos/{id}", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.UpdateVideo)))
 	mux.Handle("DELETE /api/v1/videos/{id}", authMiddleware.RequireAuth(http.HandlerFunc(videoHandler.DeleteVideo)))
@@ -295,15 +286,8 @@ func main() {
 		logger.Error("email queue did not drain", "err", err)
 	}
 
-	// ctx is already cancelled, so the transcode workers are stopping; wait for them before closing the DB
-	if transcodeQueue != nil {
-		transcodeQueue.Wait()
-	}
-	if transcodeClient != nil {
-		if err := transcodeClient.Close(); err != nil {
-			logger.Error("closing transcoder client failed", "err", err)
-		}
-	}
+	// ctx is already cancelled, so video maintenance is stopping; wait for it before closing the DB
+	<-videoMaintenanceDone
 	if err := videoStore.Close(); err != nil {
 		logger.Error("closing video storage client failed", "err", err)
 	}
@@ -313,8 +297,3 @@ func main() {
 	db.Close()
 	logger.Info("bye")
 }
-
-// disabledEnqueuer is used when GCS is off. Uploads are refused earlier, so it is never reached.
-type disabledEnqueuer struct{}
-
-func (disabledEnqueuer) Enqueue(context.Context, string) error { return storage.ErrStorageDisabled }

@@ -3287,7 +3287,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Course owner (instructor or admin) gets a signed URL to PUT a video file (mp4, mov, mkv or webm, max 5 GB) straight to storage. Send the returned headers unchanged with the PUT, then call POST /videos/{id}/confirm.",
+                "description": "Course owner (instructor or admin) starts a video (fileName must end in mp4, mov, mkv or webm; it becomes the title). The browser transcodes the file to HLS itself and uploads the files straight to storage with the returned signed form, which only accepts files under keyPrefix and expires at expiresAt (renew it with POST /videos/{id}/upload). Then call POST /videos/{id}/confirm.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5141,7 +5141,7 @@ const docTemplate = `{
         },
         "/videos/{id}/confirm": {
             "post": {
-                "description": "Call after the file was PUT to the signed URL. Checks the file and starts transcoding in the background; poll GET /videos/{id} until status is ready.",
+                "description": "Call once every HLS file is uploaded. Checks the files (playlists, every referenced file present with the right type, nothing outside the video's folder), removes stray files from earlier attempts and makes the video ready. If the check fails the video stays uploading, so it can be uploaded again.",
                 "produces": [
                     "application/json"
                 ],
@@ -5159,8 +5159,8 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "202": {
-                        "description": "Transcoding queued",
+                    "200": {
+                        "description": "Video ready",
                         "schema": {
                             "allOf": [
                                 {
@@ -5178,7 +5178,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "File not uploaded yet, empty, or wrong type",
+                        "description": "Files missing, incomplete or invalid",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -5214,7 +5214,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "Storage disabled, or transcoding queue busy (retry)",
+                        "description": "Storage disabled",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -5381,89 +5381,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/videos/{id}/retry": {
-            "post": {
-                "description": "Starts a new transcoding job for a video whose status is failed. The uploaded file is reused. Poll GET /videos/{id} until status is ready or failed.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "videos"
-                ],
-                "summary": "Retry transcoding of a failed video",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Video ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "202": {
-                        "description": "Transcoding queued again",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.JSONResponse"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/handlers.VideoResponse"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Source file is missing",
-                        "schema": {
-                            "$ref": "#/definitions/utils.JSONResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Not logged in",
-                        "schema": {
-                            "$ref": "#/definitions/utils.JSONResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Not an instructor",
-                        "schema": {
-                            "$ref": "#/definitions/utils.JSONResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Video not found",
-                        "schema": {
-                            "$ref": "#/definitions/utils.JSONResponse"
-                        }
-                    },
-                    "409": {
-                        "description": "Video is not failed",
-                        "schema": {
-                            "$ref": "#/definitions/utils.JSONResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/utils.JSONResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "Storage disabled, or transcoding queue busy (retry)",
-                        "schema": {
-                            "$ref": "#/definitions/utils.JSONResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/videos/{id}/stream": {
             "get": {
                 "description": "Returns a signed HLS manifest URL, valid for 15 minutes, that any HLS player (hls.js, Safari, VLC, the browser address bar) can open as-is: every playlist and segment URL inside it is already signed. queryParams is the bare signature. Refetch before expiresAt. Videos marked free in published courses (a free lesson does not unlock its videos), and every video of a free course, are open to any logged-in user; everything else needs the course owner or an enrolled student.",
@@ -5528,6 +5445,83 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "Storage disabled",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/videos/{id}/upload": {
+            "post": {
+                "description": "Returns a fresh signed upload form for a video that is still uploading: when the form is about to expire during a long upload, or to upload the video again after a failed attempt. Also keeps an upload that is still running from being cleaned up as abandoned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "videos"
+                ],
+                "summary": "Renew a video's upload form",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Video ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "New upload form",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/handlers.VideoUploadResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an instructor",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Video not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Video is not awaiting upload",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "File storage is disabled",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -6075,6 +6069,10 @@ const docTemplate = `{
                 "manifestUrl": {
                     "type": "string"
                 },
+                "nativeAspect": {
+                    "description": "NativeAspect is true when the picture already has the recording's own shape. False for older videos,\nwhich were stretched to 16:9 and have to be drawn back at their recorded shape.",
+                    "type": "boolean"
+                },
                 "queryParams": {
                     "type": "string"
                 },
@@ -6090,11 +6088,21 @@ const docTemplate = `{
                 "expiresAt": {
                     "type": "string"
                 },
-                "headers": {
+                "fields": {
+                    "description": "per extension: .m3u8, .mp4 (init segments), .m4s",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string"
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
                     }
+                },
+                "keyPrefix": {
+                    "type": "string"
+                },
+                "maxFileBytes": {
+                    "type": "integer"
                 },
                 "method": {
                     "type": "string"

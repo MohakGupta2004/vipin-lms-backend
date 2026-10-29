@@ -38,13 +38,29 @@ type updateVideoBody struct {
 	IsFree      *bool    `json:"isFree"` // deprecated: use tiers
 }
 
-// VideoUploadResponse is a new video plus the signed URL to upload its file to.
+// VideoUploadResponse is a video waiting for its HLS files plus the signed form to upload them with.
+// Each file is POSTed to uploadUrl as multipart/form-data: the fields for its extension, then "key"
+// (keyPrefix + the file's path, e.g. keyPrefix + "720p/seg-00001.m4s"), then "file" last.
 type VideoUploadResponse struct {
-	Video     *models.Video     `json:"video"`
-	UploadURL string            `json:"uploadUrl"`
-	Method    string            `json:"method"`
-	Headers   map[string]string `json:"headers"`
-	ExpiresAt time.Time         `json:"expiresAt"`
+	Video        *models.Video                `json:"video"`
+	UploadURL    string                       `json:"uploadUrl"`
+	Method       string                       `json:"method"`
+	KeyPrefix    string                       `json:"keyPrefix"`
+	Fields       map[string]map[string]string `json:"fields"` // per extension: .m3u8, .mp4 (init segments), .m4s
+	MaxFileBytes int64                        `json:"maxFileBytes"`
+	ExpiresAt    time.Time                    `json:"expiresAt"`
+}
+
+func newVideoUploadResponse(up *service.VideoUpload) VideoUploadResponse {
+	return VideoUploadResponse{
+		Video:        up.Video,
+		UploadURL:    up.URL,
+		Method:       http.MethodPost,
+		KeyPrefix:    up.KeyPrefix,
+		Fields:       up.Fields,
+		MaxFileBytes: up.MaxFileBytes,
+		ExpiresAt:    up.ExpiresAt,
+	}
 }
 
 // VideoResponse wraps one video.
@@ -55,7 +71,7 @@ type VideoResponse struct {
 // RequestVideoUpload godoc
 //
 //	@Summary		Start a video upload on a lesson
-//	@Description	Course owner (instructor or admin) gets a signed URL to PUT a video file (mp4, mov, mkv or webm, max 5 GB) straight to storage. Send the returned headers unchanged with the PUT, then call POST /videos/{id}/confirm.
+//	@Description	Course owner (instructor or admin) starts a video (fileName must end in mp4, mov, mkv or webm; it becomes the title). The browser transcodes the file to HLS itself and uploads the files straight to storage with the returned signed form, which only accepts files under keyPrefix and expires at expiresAt (renew it with POST /videos/{id}/upload). Then call POST /videos/{id}/confirm.
 //	@Tags			videos
 //	@Accept			json
 //	@Produce		json
@@ -94,30 +110,54 @@ func (h *VideoHandler) RequestUpload(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	utils.WriteJSONResponse(w, http.StatusCreated, VideoUploadResponse{
-		Video:     up.Video,
-		UploadURL: up.URL,
-		Method:    http.MethodPut,
-		Headers:   up.Headers,
-		ExpiresAt: up.ExpiresAt,
-	})
+	utils.WriteJSONResponse(w, http.StatusCreated, newVideoUploadResponse(up))
+}
+
+// RenewVideoUpload godoc
+//
+//	@Summary		Renew a video's upload form
+//	@Description	Returns a fresh signed upload form for a video that is still uploading: when the form is about to expire during a long upload, or to upload the video again after a failed attempt. Also keeps an upload that is still running from being cleaned up as abandoned.
+//	@Tags			videos
+//	@Produce		json
+//	@Param			id	path		string											true	"Video ID"
+//	@Success		200	{object}	utils.JSONResponse{data=VideoUploadResponse}	"New upload form"
+//	@Failure		401	{object}	utils.JSONResponse								"Not logged in"
+//	@Failure		403	{object}	utils.JSONResponse								"Not an instructor"
+//	@Failure		404	{object}	utils.JSONResponse								"Video not found"
+//	@Failure		409	{object}	utils.JSONResponse								"Video is not awaiting upload"
+//	@Failure		500	{object}	utils.JSONResponse								"Internal server error"
+//	@Failure		503	{object}	utils.JSONResponse								"File storage is disabled"
+//	@Router			/videos/{id}/upload [post]
+func (h *VideoHandler) RenewUpload(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+	up, err := h.videoService.RenewUpload(r.Context(), user, r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	utils.WriteJSONResponse(w, http.StatusOK, newVideoUploadResponse(up))
 }
 
 // ConfirmVideoUpload godoc
 //
 //	@Summary		Confirm a video upload
-//	@Description	Call after the file was PUT to the signed URL. Checks the file and starts transcoding in the background; poll GET /videos/{id} until status is ready.
+//	@Description	Call once every HLS file is uploaded. Checks the files (playlists, every referenced file present with the right type, nothing outside the video's folder), removes stray files from earlier attempts and makes the video ready. If the check fails the video stays uploading, so it can be uploaded again.
 //	@Tags			videos
 //	@Produce		json
 //	@Param			id	path		string										true	"Video ID"
-//	@Success		202	{object}	utils.JSONResponse{data=VideoResponse}		"Transcoding queued"
-//	@Failure		400	{object}	utils.JSONResponse							"File not uploaded yet, empty, or wrong type"
+//	@Success		200	{object}	utils.JSONResponse{data=VideoResponse}		"Video ready"
+//	@Failure		400	{object}	utils.JSONResponse							"Files missing, incomplete or invalid"
 //	@Failure		401	{object}	utils.JSONResponse							"Not logged in"
 //	@Failure		403	{object}	utils.JSONResponse							"Not an instructor"
 //	@Failure		404	{object}	utils.JSONResponse							"Video not found"
 //	@Failure		409	{object}	utils.JSONResponse							"Video is not awaiting upload"
 //	@Failure		500	{object}	utils.JSONResponse							"Internal server error"
-//	@Failure		503	{object}	utils.JSONResponse							"Storage disabled, or transcoding queue busy (retry)"
+//	@Failure		503	{object}	utils.JSONResponse							"Storage disabled"
 //	@Router			/videos/{id}/confirm [post]
 func (h *VideoHandler) ConfirmUpload(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
@@ -130,37 +170,7 @@ func (h *VideoHandler) ConfirmUpload(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	utils.WriteJSONResponse(w, http.StatusAccepted, VideoResponse{Video: video})
-}
-
-// RetryVideo godoc
-//
-//	@Summary		Retry transcoding of a failed video
-//	@Description	Starts a new transcoding job for a video whose status is failed. The uploaded file is reused. Poll GET /videos/{id} until status is ready or failed.
-//	@Tags			videos
-//	@Produce		json
-//	@Param			id	path		string									true	"Video ID"
-//	@Success		202	{object}	utils.JSONResponse{data=VideoResponse}	"Transcoding queued again"
-//	@Failure		400	{object}	utils.JSONResponse						"Source file is missing"
-//	@Failure		401	{object}	utils.JSONResponse						"Not logged in"
-//	@Failure		403	{object}	utils.JSONResponse						"Not an instructor"
-//	@Failure		404	{object}	utils.JSONResponse						"Video not found"
-//	@Failure		409	{object}	utils.JSONResponse						"Video is not failed"
-//	@Failure		500	{object}	utils.JSONResponse						"Internal server error"
-//	@Failure		503	{object}	utils.JSONResponse						"Storage disabled, or transcoding queue busy (retry)"
-//	@Router			/videos/{id}/retry [post]
-func (h *VideoHandler) RetryTranscode(w http.ResponseWriter, r *http.Request) {
-	user, ok := middleware.UserFromContext(r.Context())
-	if !ok {
-		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
-		return
-	}
-	video, err := h.videoService.RetryTranscode(r.Context(), user, r.PathValue("id"))
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	utils.WriteJSONResponse(w, http.StatusAccepted, VideoResponse{Video: video})
+	utils.WriteJSONResponse(w, http.StatusOK, VideoResponse{Video: video})
 }
 
 // GetVideo godoc
@@ -270,6 +280,9 @@ type VideoStreamResponse struct {
 	QueryParams string    `json:"queryParams"`
 	ExpiresAt   time.Time `json:"expiresAt"`
 	ResumeAt    int       `json:"resumeAt"` // seconds; where the user stopped last time, 0 = from the start
+	// NativeAspect is true when the picture already has the recording's own shape. False for older videos,
+	// which were stretched to 16:9 and have to be drawn back at their recorded shape.
+	NativeAspect bool `json:"nativeAspect"`
 }
 
 // StreamVideo godoc
@@ -300,10 +313,11 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	utils.WriteJSONResponse(w, http.StatusOK, VideoStreamResponse{
-		ManifestURL: st.ManifestURL,
-		QueryParams: st.QueryParams,
-		ExpiresAt:   st.ExpiresAt,
-		ResumeAt:    st.ResumeAt,
+		ManifestURL:  st.ManifestURL,
+		QueryParams:  st.QueryParams,
+		ExpiresAt:    st.ExpiresAt,
+		ResumeAt:     st.ResumeAt,
+		NativeAspect: st.NativeAspect,
 	})
 }
 

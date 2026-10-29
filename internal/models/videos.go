@@ -16,7 +16,8 @@ const (
 	VideoKindMeet    = "meet"
 )
 
-// Video is an uploaded lesson video. Lifecycle: uploading → processing → ready | failed.
+// Video is an uploaded lesson video. Lifecycle: uploading (the browser transcodes and uploads HLS) → ready.
+// processing and failed are left over from server-side transcoding.
 type Video struct {
 	ID       string `json:"id"`
 	LessonID string `json:"lessonId"`
@@ -39,9 +40,10 @@ type Video struct {
 	// Progress is the requesting user's own playback of this video, when listed for a viewer. Nil = never played.
 	Progress *VideoProgress `json:"progress,omitempty"`
 
-	OriginalKey  string `json:"-"`
-	TranscodeJob string `json:"-"`
-	HLSPrefix    string `json:"-"`
+	// OriginalKey names the video's files: the uploaded source for server-transcoded videos
+	// (courses/{c}/videos/{v}/source.mp4), the HLS manifest for browser-transcoded ones (.../{v}/hls/manifest.m3u8).
+	OriginalKey string `json:"-"`
+	HLSPrefix   string `json:"-"`
 }
 
 // VideoProgress is how far one user got in one video.
@@ -81,7 +83,7 @@ func NewVideoRepository(db *sql.DB) *VideoRepository {
 // videoColumns are the columns scanVideo reads, from videos aliased v.
 const videoColumns = `v.id, COALESCE(v.lesson_id::text, ''), COALESCE(v.course_id::text, ''), v.uploaded_by, v.title, COALESCE(v.description, ''), v.kind, v.tiers, v.is_free,
 		v.status, COALESCE(v.error, ''), COALESCE(v.size_bytes, 0), v.created_at, v.updated_at,
-		v.original_key, COALESCE(v.transcode_job, ''), COALESCE(v.hls_prefix, '')`
+		v.original_key, COALESCE(v.hls_prefix, '')`
 
 const videoSelect = `SELECT ` + videoColumns + `
 	FROM videos v`
@@ -89,7 +91,7 @@ const videoSelect = `SELECT ` + videoColumns + `
 func scanVideo(row interface{ Scan(...any) error }, v *Video) error {
 	return row.Scan(&v.ID, &v.LessonID, &v.CourseID, &v.UploadedBy, &v.Title, &v.Description, &v.Kind, scanTiers(&v.Tiers), &v.IsFree,
 		&v.Status, &v.Error, &v.SizeBytes, &v.CreatedAt, &v.UpdatedAt,
-		&v.OriginalKey, &v.TranscodeJob, &v.HLSPrefix)
+		&v.OriginalKey, &v.HLSPrefix)
 }
 
 // Create inserts a video in the 'uploading' state. v.ID must be set by the caller (it is part of the object key).
@@ -152,30 +154,47 @@ func (r *VideoRepository) UpdateDetails(ctx context.Context, id, title, descript
 		id, title, description, kind, tiersParam(tiers))
 }
 
-// MarkProcessing moves an 'uploading' video to 'processing'. It returns sql.ErrNoRows if the video is
-// missing or no longer 'uploading', so only one confirm can win.
-func (r *VideoRepository) MarkProcessing(ctx context.Context, id string, sizeBytes int64) error {
-	return r.mustAffect(ctx, `UPDATE videos SET status = 'processing', size_bytes = $2, error = NULL
-		WHERE id = $1 AND status = 'uploading'`, id, sizeBytes)
+// PublishUpload marks a video whose HLS files the browser has uploaded as ready to stream. It returns
+// sql.ErrNoRows if the video is missing or no longer 'uploading', so only one confirm can win.
+func (r *VideoRepository) PublishUpload(ctx context.Context, id, hlsPrefix string, sizeBytes int64) error {
+	return r.mustAffect(ctx, `UPDATE videos SET status = 'ready', hls_prefix = $2, size_bytes = $3, error = NULL
+		WHERE id = $1 AND status = 'uploading'`, id, hlsPrefix, sizeBytes)
 }
 
-// MarkRetrying moves a 'failed' video back to 'processing' with a clean slate (no job, no error).
-// It returns sql.ErrNoRows if the video is missing or not 'failed', so only one retry can win.
-func (r *VideoRepository) MarkRetrying(ctx context.Context, id string) error {
-	return r.mustAffect(ctx, `UPDATE videos SET status = 'processing', error = NULL, transcode_job = NULL, hls_prefix = NULL
-		WHERE id = $1 AND status = 'failed'`, id)
+// TouchUpload records that the browser is still uploading a video (it bumps updated_at), so the
+// abandoned-upload sweep leaves it alone. It returns sql.ErrNoRows if the video is not 'uploading'.
+func (r *VideoRepository) TouchUpload(ctx context.Context, id string) error {
+	return r.mustAffect(ctx, `UPDATE videos SET updated_at = now() WHERE id = $1 AND status = 'uploading'`, id)
 }
 
-// RevertToUploading undoes MarkProcessing when the video could not be queued.
-func (r *VideoRepository) RevertToUploading(ctx context.Context, id string) error {
-	return r.mustAffect(ctx, `UPDATE videos SET status = 'uploading', size_bytes = NULL
-		WHERE id = $1 AND status = 'processing' AND transcode_job IS NULL`, id)
+// ListStaleUploads returns videos left 'uploading' with no sign of life for longer than idle, oldest first.
+func (r *VideoRepository) ListStaleUploads(ctx context.Context, idle time.Duration, limit int) ([]Video, error) {
+	rows, err := r.db.QueryContext(ctx, videoSelect+`
+		WHERE v.status = 'uploading' AND v.updated_at < now() - make_interval(secs => $1)
+		ORDER BY v.updated_at LIMIT $2`, idle.Seconds(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var videos []Video
+	for rows.Next() {
+		var v Video
+		if err := scanVideo(rows, &v); err != nil {
+			return nil, err
+		}
+		videos = append(videos, v)
+	}
+	return videos, rows.Err()
 }
 
-func (r *VideoRepository) SetTranscodeJob(ctx context.Context, id, job string) error {
-	return r.mustAffect(ctx, `UPDATE videos SET transcode_job = $2 WHERE id = $1`, id, job)
+// DeleteStaleUpload removes a video that is still 'uploading' and still idle for longer than idle, so a
+// browser that renewed its upload in the meantime keeps it. It returns sql.ErrNoRows if nothing was deleted.
+func (r *VideoRepository) DeleteStaleUpload(ctx context.Context, id string, idle time.Duration) error {
+	return r.mustAffect(ctx, `DELETE FROM videos
+		WHERE id = $1 AND status = 'uploading' AND updated_at < now() - make_interval(secs => $2)`, id, idle.Seconds())
 }
 
+// MarkReady finishes a video the old server-side transcoder was working on.
 func (r *VideoRepository) MarkReady(ctx context.Context, id, hlsPrefix string) error {
 	return r.mustAffect(ctx, `UPDATE videos SET status = 'ready', hls_prefix = $2, error = NULL
 		WHERE id = $1 AND status = 'processing'`, id, hlsPrefix)
@@ -189,27 +208,26 @@ func (r *VideoRepository) MarkFailed(ctx context.Context, id, msg string) error 
 		WHERE id = $1 AND status = 'processing'`, id, msg)
 }
 
-// ListProcessingIDs returns videos still being transcoded, oldest first. Used to resume after a restart.
-func (r *VideoRepository) ListProcessingIDs(ctx context.Context) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM videos WHERE status = 'processing' ORDER BY created_at`)
+// ListProcessing returns videos the old server-side transcoder left 'processing', oldest first.
+func (r *VideoRepository) ListProcessing(ctx context.Context) ([]Video, error) {
+	rows, err := r.db.QueryContext(ctx, videoSelect+` WHERE v.status = 'processing' ORDER BY v.created_at`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []string
+	var videos []Video
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var v Video
+		if err := scanVideo(rows, &v); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		videos = append(videos, v)
 	}
-	return ids, rows.Err()
+	return videos, rows.Err()
 }
 
 // Delete removes a video row; its progress and shares go with it (ON DELETE CASCADE). It returns sql.ErrNoRows
-// if the video does not exist, and leaves a video that is transcoding alone (busy = true) so a running job
-// never writes into a deleted video's folder.
+// if the video does not exist, and leaves a video the old server-side transcoder is still on alone (busy = true).
 func (r *VideoRepository) Delete(ctx context.Context, id string) (busy bool, err error) {
 	var status string
 	err = r.db.QueryRowContext(ctx, `DELETE FROM videos WHERE id = $1 AND status <> 'processing' RETURNING status`, id).Scan(&status)

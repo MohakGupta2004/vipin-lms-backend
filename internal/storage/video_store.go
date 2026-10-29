@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 
@@ -14,47 +13,69 @@ import (
 )
 
 const (
-	// MaxVideoSize is the largest video accepted, in bytes.
-	MaxVideoSize int64 = 5 << 30 // 5 GiB
+	// MaxHLSFileSize is the largest single file (playlist, init segment or media segment) a browser may upload.
+	// A 6-second 1080p segment is a few MB; the cap leaves room for very busy footage.
+	MaxHLSFileSize int64 = 64 << 20 // 64 MiB
 
-	videoUploadURLExpiry = 15 * time.Minute
+	hlsUploadFormExpiry = time.Hour
 )
 
-// videoContentTypes maps an allowed file extension to the content type the upload must use.
-var videoContentTypes = map[string]string{
-	".mp4":  "video/mp4",
-	".mov":  "video/quicktime",
-	".mkv":  "video/x-matroska",
-	".webm": "video/webm",
+// hlsContentTypes maps an HLS file extension to the content type it must be stored with.
+var hlsContentTypes = map[string]string{
+	".m3u8": "application/vnd.apple.mpegurl",
+	".mp4":  "video/mp4",         // init segments
+	".m4s":  "video/iso.segment", // CMAF media segments
 }
 
-// VideoContentType returns the content type for a video file extension such as ".mp4" (case-insensitive).
-func VideoContentType(ext string) (string, bool) {
-	ct, ok := videoContentTypes[strings.ToLower(ext)]
+// HLSContentType returns the content type for an HLS file extension such as ".m4s".
+func HLSContentType(ext string) (string, bool) {
+	ct, ok := hlsContentTypes[ext]
 	return ct, ok
 }
 
-// VideoUploadURLExpiry is how long a signed upload URL stays valid.
-func VideoUploadURLExpiry() time.Duration { return videoUploadURLExpiry }
+// HLSExtensions lists the file extensions a browser may upload into a video's HLS folder.
+func HLSExtensions() []string { return []string{".m3u8", ".mp4", ".m4s"} }
 
-// VideoStore hands out signed upload URLs and inspects uploaded video objects.
+// HLSUploadFormExpiry is how long a signed upload form stays valid. Long jobs renew it.
+func HLSUploadFormExpiry() time.Duration { return hlsUploadFormExpiry }
+
+// UploadForm is a signed POST policy: the browser sends Fields plus "key" (the object name, which must start
+// with the folder it was signed for) and "file" (last) as multipart/form-data to URL.
+type UploadForm struct {
+	URL    string
+	Fields map[string]string
+}
+
+// ObjectInfo describes one stored object.
+type ObjectInfo struct {
+	Name        string
+	Size        int64
+	ContentType string
+}
+
+// VideoStore hands out signed upload forms and inspects uploaded video files.
 // The API server never proxies video bytes.
 type VideoStore interface {
 	// Enabled reports whether videos can be stored. When false every operation returns ErrStorageDisabled.
 	Enabled() bool
-	// SignedUploadURL returns a V4 signed PUT URL plus the headers the client must send with it.
-	// GCS rejects uploads whose Content-Type differs or whose size exceeds maxBytes.
-	SignedUploadURL(object, contentType string, maxBytes int64, expires time.Duration) (url string, headers map[string]string, err error)
+	// SignedUploadForm returns a POST policy that lets the holder upload any number of files whose names start
+	// with prefix, each with exactly this content type (and cache control, if set) and at most maxBytes long.
+	SignedUploadForm(prefix, contentType, cacheControl string, maxBytes int64, expires time.Duration) (*UploadForm, error)
 	// ObjectInfo returns the size and content type of a stored object, or ErrObjectNotFound.
 	ObjectInfo(ctx context.Context, object string) (size int64, contentType string, err error)
+	// ListObjects returns every object whose name starts with prefix. More than max objects is an error.
+	ListObjects(ctx context.Context, prefix string, max int) ([]ObjectInfo, error)
 	// ReadSmallObject returns a stored object's bytes, or ErrObjectNotFound. Objects over maxBytes are an error.
 	ReadSmallObject(ctx context.Context, object string, maxBytes int64) ([]byte, error)
-	// URI returns the gs://bucket/object address of an object.
-	URI(object string) string
+	// DeleteObject removes one object. A missing object is not an error.
+	DeleteObject(ctx context.Context, object string) error
 	// DeletePrefix removes every object whose name starts with prefix. Nothing to delete is not an error.
 	DeletePrefix(ctx context.Context, prefix string) error
 	Close() error
 }
+
+// ErrTooManyObjects means a listing found more objects than the caller allows.
+var ErrTooManyObjects = errors.New("storage: too many objects")
 
 // GCSVideoStore keeps videos in a Google Cloud Storage bucket.
 // Credentials come from Application Default Credentials; signing needs a service account key
@@ -79,24 +100,36 @@ func NewGCSVideoStore(ctx context.Context, bucket string) (*GCSVideoStore, error
 
 func (s *GCSVideoStore) Enabled() bool { return true }
 
-func (s *GCSVideoStore) SignedUploadURL(object, contentType string, maxBytes int64, expires time.Duration) (string, map[string]string, error) {
-	headers := map[string]string{
-		"Content-Type":                contentType,
-		"x-goog-content-length-range": "0," + strconv.FormatInt(maxBytes, 10),
-	}
-	url, err := s.client.Bucket(s.bucket).SignedURL(object, &gcs.SignedURLOptions{
-		Scheme:  gcs.SigningSchemeV4,
-		Method:  "PUT",
-		Expires: time.Now().Add(expires),
-		Headers: []string{
-			"Content-Type:" + contentType,
-			"x-goog-content-length-range:" + headers["x-goog-content-length-range"],
-		},
-	})
+func (s *GCSVideoStore) SignedUploadForm(prefix, contentType, cacheControl string, maxBytes int64, expires time.Duration) (*UploadForm, error) {
+	opts, err := uploadFormOptions(prefix, contentType, cacheControl, maxBytes, expires)
 	if err != nil {
-		return "", nil, fmt.Errorf("storage: sign upload url: %w", err)
+		return nil, err
 	}
-	return url, headers, nil
+	// An empty object name leaves "key" to the browser; the starts-with condition pins it to the folder.
+	policy, err := s.client.Bucket(s.bucket).GenerateSignedPostPolicyV4("", opts)
+	if err != nil {
+		return nil, fmt.Errorf("storage: sign upload form: %w", err)
+	}
+	return &UploadForm{URL: policy.URL, Fields: policy.Fields}, nil
+}
+
+// uploadFormOptions builds the POST policy for SignedUploadForm. Signing credentials are filled in by the caller.
+func uploadFormOptions(prefix, contentType, cacheControl string, maxBytes int64, expires time.Duration) (*gcs.PostPolicyV4Options, error) {
+	// An empty or unanchored prefix would let the form write anywhere in the bucket.
+	if strings.Trim(prefix, "/") == "" || !strings.HasSuffix(prefix, "/") {
+		return nil, errors.New("storage: upload form needs a folder prefix ending in /")
+	}
+	if contentType == "" || maxBytes <= 0 {
+		return nil, errors.New("storage: upload form needs a content type and a size limit")
+	}
+	return &gcs.PostPolicyV4Options{
+		Expires: time.Now().Add(expires),
+		Fields:  &gcs.PolicyV4Fields{ContentType: contentType, CacheControl: cacheControl},
+		Conditions: []gcs.PostPolicyV4Condition{
+			gcs.ConditionStartsWith("$key", prefix),
+			gcs.ConditionContentLengthRange(1, uint64(maxBytes)),
+		},
+	}, nil
 }
 
 func (s *GCSVideoStore) ObjectInfo(ctx context.Context, object string) (int64, string, error) {
@@ -108,6 +141,32 @@ func (s *GCSVideoStore) ObjectInfo(ctx context.Context, object string) (int64, s
 		return 0, "", fmt.Errorf("storage: read object info: %w", err)
 	}
 	return attrs.Size, attrs.ContentType, nil
+}
+
+func (s *GCSVideoStore) ListObjects(ctx context.Context, prefix string, max int) ([]ObjectInfo, error) {
+	if strings.Trim(prefix, "/") == "" {
+		return nil, errors.New("storage: refusing to list an empty prefix")
+	}
+	query := &gcs.Query{Prefix: prefix}
+	// Only these fields are fetched, which keeps each page of the listing small.
+	if err := query.SetAttrSelection([]string{"Name", "Size", "ContentType"}); err != nil {
+		return nil, fmt.Errorf("storage: list objects: %w", err)
+	}
+	it := s.client.Bucket(s.bucket).Objects(ctx, query)
+	var objects []ObjectInfo
+	for {
+		attrs, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			return objects, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("storage: list objects: %w", err)
+		}
+		if len(objects) == max {
+			return nil, ErrTooManyObjects
+		}
+		objects = append(objects, ObjectInfo{Name: attrs.Name, Size: attrs.Size, ContentType: attrs.ContentType})
+	}
 }
 
 func (s *GCSVideoStore) ReadSmallObject(ctx context.Context, object string, maxBytes int64) ([]byte, error) {
@@ -129,8 +188,12 @@ func (s *GCSVideoStore) ReadSmallObject(ctx context.Context, object string, maxB
 	return data, nil
 }
 
-func (s *GCSVideoStore) URI(object string) string {
-	return fmt.Sprintf("gs://%s/%s", s.bucket, object)
+func (s *GCSVideoStore) DeleteObject(ctx context.Context, object string) error {
+	err := s.client.Bucket(s.bucket).Object(object).Delete(ctx)
+	if err != nil && !errors.Is(err, gcs.ErrObjectNotExist) {
+		return fmt.Errorf("storage: delete object %s: %w", object, err)
+	}
+	return nil
 }
 
 func (s *GCSVideoStore) DeletePrefix(ctx context.Context, prefix string) error {
@@ -163,19 +226,23 @@ var _ VideoStore = DisabledVideoStore{}
 
 func (DisabledVideoStore) Enabled() bool { return false }
 
-func (DisabledVideoStore) SignedUploadURL(string, string, int64, time.Duration) (string, map[string]string, error) {
-	return "", nil, ErrStorageDisabled
+func (DisabledVideoStore) SignedUploadForm(string, string, string, int64, time.Duration) (*UploadForm, error) {
+	return nil, ErrStorageDisabled
 }
 
 func (DisabledVideoStore) ObjectInfo(context.Context, string) (int64, string, error) {
 	return 0, "", ErrStorageDisabled
 }
 
+func (DisabledVideoStore) ListObjects(context.Context, string, int) ([]ObjectInfo, error) {
+	return nil, ErrStorageDisabled
+}
+
 func (DisabledVideoStore) ReadSmallObject(context.Context, string, int64) ([]byte, error) {
 	return nil, ErrStorageDisabled
 }
 
-func (DisabledVideoStore) URI(string) string { return "" }
+func (DisabledVideoStore) DeleteObject(context.Context, string) error { return ErrStorageDisabled }
 
 func (DisabledVideoStore) DeletePrefix(context.Context, string) error { return ErrStorageDisabled }
 
