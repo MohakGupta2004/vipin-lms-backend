@@ -29,10 +29,11 @@ type User struct {
 	LastName  string `json:"lastName"`
 	Email     string `json:"email"`
 	// Phone is empty for accounts created before phone numbers were collected.
-	Phone       string    `json:"phone"`
-	Password    string    `json:"-"`
-	Role        Role      `json:"role"`
-	LastLoginAt time.Time `json:"lastLoginAt"`
+	Phone    string `json:"phone"`
+	Password string `json:"-"`
+	Role     Role   `json:"role"`
+	// LastLoginAt is null for an account that signed up but never logged in.
+	LastLoginAt *time.Time `json:"lastLoginAt"`
 	// EmailVerified is true once the user has confirmed their email with a one-time code.
 	EmailVerified bool `json:"emailVerified"`
 }
@@ -66,21 +67,29 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 	}
 }
 
+// CreateUser saves a new student account. last_login_at stays NULL, so a NULL value means
+// "signed up but never logged in"; the first login fills it in.
 func (r *UserRepository) CreateUser(firstName, lastName, email, phone, password string, ctx context.Context) (*User, error) {
 	user := &User{
-		FirstName:   firstName,
-		LastName:    lastName,
-		Email:       email,
-		Phone:       phone,
-		Password:    password,
-		LastLoginAt: time.Now(),
-		Role:        RoleStudent,
+		FirstName: firstName,
+		LastName:  lastName,
+		Email:     email,
+		Phone:     phone,
+		Password:  password,
+		Role:      RoleStudent,
 	}
 
-	query := "INSERT INTO users (first_name, last_name, email, phone, password, role, last_login_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
-	row := r.db.QueryRowContext(ctx, query, user.FirstName, user.LastName, user.Email, user.Phone, user.Password, user.Role, user.LastLoginAt).Scan(&user.ID)
+	query := "INSERT INTO users (first_name, last_name, email, phone, password, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"
+	row := r.db.QueryRowContext(ctx, query, user.FirstName, user.LastName, user.Email, user.Phone, user.Password, user.Role).Scan(&user.ID)
 
 	return user, row
+}
+
+// UpdateLastLoginAt records the moment the user logged in.
+func (r *UserRepository) UpdateLastLoginAt(ctx context.Context, userID string) error {
+	query := "UPDATE users SET last_login_at = now() WHERE id = $1"
+	_, err := r.db.ExecContext(ctx, query, userID)
+	return err
 }
 
 func (r *UserRepository) GetUserByEmail(email string, ctx context.Context) (*User, error) {
@@ -88,12 +97,18 @@ func (r *UserRepository) GetUserByEmail(email string, ctx context.Context) (*Use
 	row := r.db.QueryRowContext(ctx, query, email)
 
 	user := &User{}
-	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Phone, &user.Password, &user.Role, &user.LastLoginAt, &user.EmailVerified)
+	// last_login_at is NULL for an account that never logged in.
+	var lastLoginAt sql.NullTime
+	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Phone, &user.Password, &user.Role, &lastLoginAt, &user.EmailVerified)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // User not found
 		}
 		return nil, err
+	}
+	if lastLoginAt.Valid {
+		t := lastLoginAt.Time
+		user.LastLoginAt = &t
 	}
 
 	return user, nil
@@ -103,12 +118,17 @@ func (r *UserRepository) GetUserById(id string, ctx context.Context) (*User, err
 	row := r.db.QueryRowContext(ctx, query, id)
 
 	user := &User{}
-	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Phone, &user.Password, &user.Role, &user.LastLoginAt, &user.EmailVerified)
+	var lastLoginAt sql.NullTime
+	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Phone, &user.Password, &user.Role, &lastLoginAt, &user.EmailVerified)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // User not found
 		}
 		return nil, err
+	}
+	if lastLoginAt.Valid {
+		t := lastLoginAt.Time
+		user.LastLoginAt = &t
 	}
 
 	return user, nil
@@ -119,12 +139,17 @@ func (r *UserRepository) UpdateRefreshToken(userId, refreshToken string, ctx con
 	row := r.db.QueryRowContext(ctx, query, refreshToken, userId)
 
 	user := &User{}
-	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.Role, &user.LastLoginAt)
+	var lastLoginAt sql.NullTime
+	err := row.Scan(&user.ID, &user.FirstName, &user.LastName, &user.Email, &user.Password, &user.Role, &lastLoginAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // User not found
 		}
 		return nil, err
+	}
+	if lastLoginAt.Valid {
+		t := lastLoginAt.Time
+		user.LastLoginAt = &t
 	}
 
 	return user, nil

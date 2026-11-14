@@ -77,6 +77,14 @@ func (s *AuthService) Login(email, password string) (*models.User, string, strin
 		return nil, "", "", errors.New("invalid email or password")
 	}
 
+	// The login is the only thing that fills last_login_at: NULL means "signed up, never logged in".
+	err = s.userRepository.UpdateLastLoginAt(s.databaseContext, user.ID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	loginTime := time.Now().UTC()
+	user.LastLoginAt = &loginTime
+
 	token, refresh, err := s.GenerateTokens(user)
 	if err != nil {
 		return nil, "", "", err
