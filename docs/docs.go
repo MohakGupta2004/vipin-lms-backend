@@ -15,6 +15,532 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/admin/dashboard": {
+            "get": {
+                "description": "Admin only. Sign-ups, logins, enrollments and website numbers of the last days, plus the newest sign-ups and leads.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Admin dashboard",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Window size in days (default 3, min 1, max 30)",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Dashboard",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.AdminDashboard"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid days",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/people": {
+            "get": {
+                "description": "Admin only. Students of one view: new, never_logged_in, not_enrolled or recently_enrolled.\nEvery person carries all of their enrollments, newest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List students for the admin",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "new, never_logged_in, not_enrolled or recently_enrolled",
+                        "name": "view",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Window size in days (default 3, min 1, max 30)",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max students to return (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of students to skip (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Students",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PeoplePage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid view, days, limit or offset",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/site/leads": {
+            "get": {
+                "description": "Admin only. Newest first. Optional filters: kind, course slug and q (name/email/company).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-site"
+                ],
+                "summary": "List website leads",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "masterclass, diagnostic, contact, firms, newsletter or interest",
+                        "name": "kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only leads containing this course slug",
+                        "name": "course",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Case-insensitive search on name/email/company",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number to skip (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Leads",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.SiteLeadsPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid kind, limit or offset",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/site/leads/emails": {
+            "get": {
+                "description": "Admin only. Distinct lower-cased emails for one lead kind, optionally filtered by course slug.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-site"
+                ],
+                "summary": "List website lead emails",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "masterclass, diagnostic, contact, firms, newsletter or interest",
+                        "name": "kind",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only leads containing this course slug",
+                        "name": "course",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Emails",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.SiteLeadEmails"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid or missing kind",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/site/overview": {
+            "get": {
+                "description": "Admin only. Aggregated website visitor, pageview and lead metrics for a UTC day window ending now.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-site"
+                ],
+                "summary": "Website overview",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Window size in days (default 30, min 1, max 365)",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Overview",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.SiteOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid days",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/site/visitors": {
+            "get": {
+                "description": "Admin only. Ordered by lastSeenAt desc. returning=true keeps only visitors with visitCount \u003e 1.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-site"
+                ],
+                "summary": "List website visitors",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Only returning visitors",
+                        "name": "returning",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number to skip (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Visitors",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.SiteVisitorsPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid returning, limit or offset",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/site/visitors/{id}/events": {
+            "get": {
+                "description": "Admin only. Newest first. Helps inspect one visitor journey.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-site"
+                ],
+                "summary": "List one visitor's events",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Visitor ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max events (default 100, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Events",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.SiteEvent"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid limit",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Visitor not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/forgot-password": {
             "post": {
                 "description": "Emails a 6-digit reset code if the address belongs to an account. The response is identical either way, so it does not reveal which addresses are registered.",
@@ -6199,6 +6725,59 @@ const docTemplate = `{
                 }
             }
         },
+        "models.AdminDashboard": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer"
+                },
+                "expiringSoon": {
+                    "type": "integer"
+                },
+                "neverLoggedIn": {
+                    "type": "integer"
+                },
+                "newFormLeads": {
+                    "type": "integer"
+                },
+                "newMasterclassSeats": {
+                    "type": "integer"
+                },
+                "newSignups": {
+                    "type": "integer"
+                },
+                "newVisitors": {
+                    "type": "integer"
+                },
+                "notEnrolled": {
+                    "type": "integer"
+                },
+                "publishedCourses": {
+                    "type": "integer"
+                },
+                "recentEnrollments": {
+                    "type": "integer"
+                },
+                "recentLeads": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.RecentLead"
+                    }
+                },
+                "recentSignups": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.RecentSignup"
+                    }
+                },
+                "totalCourses": {
+                    "type": "integer"
+                },
+                "totalStudents": {
+                    "type": "integer"
+                }
+            }
+        },
         "models.AttemptAnswer": {
             "type": "object",
             "properties": {
@@ -6830,6 +7409,79 @@ const docTemplate = `{
                 }
             }
         },
+        "models.PeoplePage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Person"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.Person": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "emailVerified": {
+                    "type": "boolean"
+                },
+                "enrollments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.PersonEnrollment"
+                    }
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastLoginAt": {
+                    "description": "LastLoginAt is null when the student signed up but never logged in.",
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.PersonEnrollment": {
+            "type": "object",
+            "properties": {
+                "courseId": {
+                    "type": "string"
+                },
+                "courseTitle": {
+                    "type": "string"
+                },
+                "enrolledAt": {
+                    "type": "string"
+                },
+                "instructorName": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tier": {
+                    "$ref": "#/definitions/models.Tier"
+                }
+            }
+        },
         "models.Post": {
             "type": "object",
             "properties": {
@@ -7005,6 +7657,52 @@ const docTemplate = `{
                 }
             }
         },
+        "models.RecentLead": {
+            "type": "object",
+            "properties": {
+                "courseSlugs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.RecentSignup": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Role": {
             "type": "string",
             "enum": [
@@ -7017,6 +7715,312 @@ const docTemplate = `{
                 "RoleInstructor",
                 "RoleAdmin"
             ]
+        },
+        "models.SiteDailyPoint": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "leads": {
+                    "type": "integer"
+                },
+                "newVisitors": {
+                    "type": "integer"
+                },
+                "pageviews": {
+                    "type": "integer"
+                },
+                "returningVisitors": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.SiteEvent": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "eventType": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "sessionId": {
+                    "type": "string"
+                },
+                "target": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SiteKeyCount": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SiteLead": {
+            "type": "object",
+            "properties": {
+                "caslConsent": {
+                    "type": "boolean"
+                },
+                "companyName": {
+                    "type": "string"
+                },
+                "courseSlugs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "examDate": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "sourcePath": {
+                    "type": "string"
+                },
+                "teamSize": {
+                    "type": "string"
+                },
+                "visitorId": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SiteLeadEmails": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "models.SiteLeadsPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteLead"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.SiteOverview": {
+            "type": "object",
+            "properties": {
+                "anonymousPageviews": {
+                    "type": "integer"
+                },
+                "browsers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteKeyCount"
+                    }
+                },
+                "countries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteKeyCount"
+                    }
+                },
+                "daily": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteDailyPoint"
+                    }
+                },
+                "days": {
+                    "type": "integer"
+                },
+                "devices": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteKeyCount"
+                    }
+                },
+                "leads": {
+                    "type": "integer"
+                },
+                "leadsByCourse": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteKeyCount"
+                    }
+                },
+                "leadsByKind": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteKeyCount"
+                    }
+                },
+                "masterclassByCourse": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteKeyCount"
+                    }
+                },
+                "newVisitors": {
+                    "type": "integer"
+                },
+                "pageviews": {
+                    "type": "integer"
+                },
+                "referrers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteKeyCount"
+                    }
+                },
+                "returningVisitors": {
+                    "type": "integer"
+                },
+                "topPages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteKeyCount"
+                    }
+                },
+                "uniqueVisitors": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.SiteVisitor": {
+            "type": "object",
+            "properties": {
+                "browser": {
+                    "type": "string"
+                },
+                "city": {
+                    "type": "string"
+                },
+                "country": {
+                    "type": "string"
+                },
+                "deviceType": {
+                    "type": "string"
+                },
+                "events": {
+                    "type": "integer"
+                },
+                "fingerprint": {
+                    "type": "string"
+                },
+                "fingerprintMatches": {
+                    "type": "integer"
+                },
+                "firstLanding": {
+                    "type": "string"
+                },
+                "firstReferrer": {
+                    "type": "string"
+                },
+                "firstSeenAt": {
+                    "type": "string"
+                },
+                "language": {
+                    "type": "string"
+                },
+                "lastSeenAt": {
+                    "type": "string"
+                },
+                "lastSessionId": {
+                    "type": "string"
+                },
+                "leadEmail": {
+                    "type": "string"
+                },
+                "os": {
+                    "type": "string"
+                },
+                "pageviews": {
+                    "type": "integer"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "screen": {
+                    "type": "string"
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "utmCampaign": {
+                    "type": "string"
+                },
+                "utmMedium": {
+                    "type": "string"
+                },
+                "utmSource": {
+                    "type": "string"
+                },
+                "visitCount": {
+                    "type": "integer"
+                },
+                "visitorId": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SiteVisitorsPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteVisitor"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
         },
         "models.StudentAttempt": {
             "type": "object",
@@ -7192,6 +8196,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "lastLoginAt": {
+                    "description": "LastLoginAt is null for an account that signed up but never logged in.",
                     "type": "string"
                 },
                 "lastName": {

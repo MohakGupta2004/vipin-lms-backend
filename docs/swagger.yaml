@@ -453,6 +453,41 @@ definitions:
       title:
         type: string
     type: object
+  models.AdminDashboard:
+    properties:
+      days:
+        type: integer
+      expiringSoon:
+        type: integer
+      neverLoggedIn:
+        type: integer
+      newFormLeads:
+        type: integer
+      newMasterclassSeats:
+        type: integer
+      newSignups:
+        type: integer
+      newVisitors:
+        type: integer
+      notEnrolled:
+        type: integer
+      publishedCourses:
+        type: integer
+      recentEnrollments:
+        type: integer
+      recentLeads:
+        items:
+          $ref: '#/definitions/models.RecentLead'
+        type: array
+      recentSignups:
+        items:
+          $ref: '#/definitions/models.RecentSignup'
+        type: array
+      totalCourses:
+        type: integer
+      totalStudents:
+        type: integer
+    type: object
   models.AttemptAnswer:
     properties:
       correctOptionId:
@@ -911,6 +946,55 @@ definitions:
       uploaderName:
         type: string
     type: object
+  models.PeoplePage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/models.Person'
+        type: array
+      total:
+        type: integer
+    type: object
+  models.Person:
+    properties:
+      createdAt:
+        type: string
+      email:
+        type: string
+      emailVerified:
+        type: boolean
+      enrollments:
+        items:
+          $ref: '#/definitions/models.PersonEnrollment'
+        type: array
+      firstName:
+        type: string
+      id:
+        type: string
+      lastLoginAt:
+        description: LastLoginAt is null when the student signed up but never logged
+          in.
+        type: string
+      lastName:
+        type: string
+      phone:
+        type: string
+    type: object
+  models.PersonEnrollment:
+    properties:
+      courseId:
+        type: string
+      courseTitle:
+        type: string
+      enrolledAt:
+        type: string
+      instructorName:
+        type: string
+      status:
+        type: string
+      tier:
+        $ref: '#/definitions/models.Tier'
+    type: object
   models.Post:
     properties:
       authorId:
@@ -1030,6 +1114,36 @@ definitions:
       userId:
         type: string
     type: object
+  models.RecentLead:
+    properties:
+      courseSlugs:
+        items:
+          type: string
+        type: array
+      createdAt:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+      name:
+        type: string
+    type: object
+  models.RecentSignup:
+    properties:
+      createdAt:
+        type: string
+      email:
+        type: string
+      firstName:
+        type: string
+      id:
+        type: string
+      lastName:
+        type: string
+    type: object
   models.Role:
     enum:
     - student
@@ -1040,6 +1154,207 @@ definitions:
     - RoleStudent
     - RoleInstructor
     - RoleAdmin
+  models.SiteDailyPoint:
+    properties:
+      date:
+        type: string
+      leads:
+        type: integer
+      newVisitors:
+        type: integer
+      pageviews:
+        type: integer
+      returningVisitors:
+        type: integer
+    type: object
+  models.SiteEvent:
+    properties:
+      createdAt:
+        type: string
+      eventType:
+        type: string
+      id:
+        type: integer
+      label:
+        type: string
+      path:
+        type: string
+      sessionId:
+        type: string
+      target:
+        type: string
+    type: object
+  models.SiteKeyCount:
+    properties:
+      count:
+        type: integer
+      key:
+        type: string
+    type: object
+  models.SiteLead:
+    properties:
+      caslConsent:
+        type: boolean
+      companyName:
+        type: string
+      courseSlugs:
+        items:
+          type: string
+        type: array
+      createdAt:
+        type: string
+      email:
+        type: string
+      examDate:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+      message:
+        type: string
+      name:
+        type: string
+      phone:
+        type: string
+      sourcePath:
+        type: string
+      teamSize:
+        type: string
+      visitorId:
+        type: string
+    type: object
+  models.SiteLeadEmails:
+    properties:
+      count:
+        type: integer
+      emails:
+        items:
+          type: string
+        type: array
+    type: object
+  models.SiteLeadsPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/models.SiteLead'
+        type: array
+      total:
+        type: integer
+    type: object
+  models.SiteOverview:
+    properties:
+      anonymousPageviews:
+        type: integer
+      browsers:
+        items:
+          $ref: '#/definitions/models.SiteKeyCount'
+        type: array
+      countries:
+        items:
+          $ref: '#/definitions/models.SiteKeyCount'
+        type: array
+      daily:
+        items:
+          $ref: '#/definitions/models.SiteDailyPoint'
+        type: array
+      days:
+        type: integer
+      devices:
+        items:
+          $ref: '#/definitions/models.SiteKeyCount'
+        type: array
+      leads:
+        type: integer
+      leadsByCourse:
+        items:
+          $ref: '#/definitions/models.SiteKeyCount'
+        type: array
+      leadsByKind:
+        items:
+          $ref: '#/definitions/models.SiteKeyCount'
+        type: array
+      masterclassByCourse:
+        items:
+          $ref: '#/definitions/models.SiteKeyCount'
+        type: array
+      newVisitors:
+        type: integer
+      pageviews:
+        type: integer
+      referrers:
+        items:
+          $ref: '#/definitions/models.SiteKeyCount'
+        type: array
+      returningVisitors:
+        type: integer
+      topPages:
+        items:
+          $ref: '#/definitions/models.SiteKeyCount'
+        type: array
+      uniqueVisitors:
+        type: integer
+    type: object
+  models.SiteVisitor:
+    properties:
+      browser:
+        type: string
+      city:
+        type: string
+      country:
+        type: string
+      deviceType:
+        type: string
+      events:
+        type: integer
+      fingerprint:
+        type: string
+      fingerprintMatches:
+        type: integer
+      firstLanding:
+        type: string
+      firstReferrer:
+        type: string
+      firstSeenAt:
+        type: string
+      language:
+        type: string
+      lastSeenAt:
+        type: string
+      lastSessionId:
+        type: string
+      leadEmail:
+        type: string
+      os:
+        type: string
+      pageviews:
+        type: integer
+      region:
+        type: string
+      screen:
+        type: string
+      timezone:
+        type: string
+      utmCampaign:
+        type: string
+      utmMedium:
+        type: string
+      utmSource:
+        type: string
+      visitCount:
+        type: integer
+      visitorId:
+        type: string
+    type: object
+  models.SiteVisitorsPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/models.SiteVisitor'
+        type: array
+      total:
+        type: integer
+    type: object
   models.StudentAttempt:
     properties:
       courseId:
@@ -1167,6 +1482,8 @@ definitions:
       id:
         type: string
       lastLoginAt:
+        description: LastLoginAt is null for an account that signed up but never logged
+          in.
         type: string
       lastName:
         type: string
@@ -1353,6 +1670,339 @@ info:
   title: Vipin LMS API
   version: "1.0"
 paths:
+  /admin/dashboard:
+    get:
+      description: Admin only. Sign-ups, logins, enrollments and website numbers of
+        the last days, plus the newest sign-ups and leads.
+      parameters:
+      - description: Window size in days (default 3, min 1, max 30)
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Dashboard
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.AdminDashboard'
+              type: object
+        "400":
+          description: Invalid days
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Admin dashboard
+      tags:
+      - admin
+  /admin/people:
+    get:
+      description: |-
+        Admin only. Students of one view: new, never_logged_in, not_enrolled or recently_enrolled.
+        Every person carries all of their enrollments, newest first.
+      parameters:
+      - description: new, never_logged_in, not_enrolled or recently_enrolled
+        in: query
+        name: view
+        required: true
+        type: string
+      - description: Window size in days (default 3, min 1, max 30)
+        in: query
+        name: days
+        type: integer
+      - description: Max students to return (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      - description: Number of students to skip (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Students
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PeoplePage'
+              type: object
+        "400":
+          description: Invalid view, days, limit or offset
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List students for the admin
+      tags:
+      - admin
+  /admin/site/leads:
+    get:
+      description: 'Admin only. Newest first. Optional filters: kind, course slug
+        and q (name/email/company).'
+      parameters:
+      - description: masterclass, diagnostic, contact, firms, newsletter or interest
+        in: query
+        name: kind
+        type: string
+      - description: Only leads containing this course slug
+        in: query
+        name: course
+        type: string
+      - description: Case-insensitive search on name/email/company
+        in: query
+        name: q
+        type: string
+      - description: Max results (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      - description: Number to skip (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Leads
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.SiteLeadsPage'
+              type: object
+        "400":
+          description: Invalid kind, limit or offset
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List website leads
+      tags:
+      - admin-site
+  /admin/site/leads/emails:
+    get:
+      description: Admin only. Distinct lower-cased emails for one lead kind, optionally
+        filtered by course slug.
+      parameters:
+      - description: masterclass, diagnostic, contact, firms, newsletter or interest
+        in: query
+        name: kind
+        required: true
+        type: string
+      - description: Only leads containing this course slug
+        in: query
+        name: course
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Emails
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.SiteLeadEmails'
+              type: object
+        "400":
+          description: Invalid or missing kind
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List website lead emails
+      tags:
+      - admin-site
+  /admin/site/overview:
+    get:
+      description: Admin only. Aggregated website visitor, pageview and lead metrics
+        for a UTC day window ending now.
+      parameters:
+      - description: Window size in days (default 30, min 1, max 365)
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Overview
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.SiteOverview'
+              type: object
+        "400":
+          description: Invalid days
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Website overview
+      tags:
+      - admin-site
+  /admin/site/visitors:
+    get:
+      description: Admin only. Ordered by lastSeenAt desc. returning=true keeps only
+        visitors with visitCount > 1.
+      parameters:
+      - description: Only returning visitors
+        in: query
+        name: returning
+        type: boolean
+      - description: Max results (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      - description: Number to skip (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Visitors
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.SiteVisitorsPage'
+              type: object
+        "400":
+          description: Invalid returning, limit or offset
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List website visitors
+      tags:
+      - admin-site
+  /admin/site/visitors/{id}/events:
+    get:
+      description: Admin only. Newest first. Helps inspect one visitor journey.
+      parameters:
+      - description: Visitor ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Max events (default 100, max 500)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Events
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.SiteEvent'
+                  type: array
+              type: object
+        "400":
+          description: Invalid limit
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Visitor not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List one visitor's events
+      tags:
+      - admin-site
   /auth/forgot-password:
     post:
       consumes:
