@@ -66,6 +66,20 @@ type SiteLeadEmails struct {
 	Emails []string `json:"emails"`
 }
 
+type SiteLeadPhone struct {
+	Phone     string    `json:"phone"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	Kinds     []string  `json:"kinds"`
+	LeadCount int       `json:"leadCount"`
+	LastAt    time.Time `json:"lastAt"`
+}
+
+type SiteLeadPhones struct {
+	Count  int             `json:"count"`
+	Phones []SiteLeadPhone `json:"phones"`
+}
+
 type SiteVisitor struct {
 	VisitorID          string    `json:"visitorId"`
 	Fingerprint        string    `json:"fingerprint"`
@@ -323,6 +337,44 @@ func (r *SiteRepository) ListLeadEmails(ctx context.Context, kind, course string
 		return nil, err
 	}
 	result.Count = len(result.Emails)
+	return result, nil
+}
+
+func (r *SiteRepository) ListLeadPhones(ctx context.Context, kind, course string) (*SiteLeadPhones, error) {
+	query := `SELECT phone,
+		(array_agg(name ORDER BY created_at DESC))[1] AS name,
+		(array_agg(email ORDER BY created_at DESC))[1] AS email,
+		COALESCE(array_to_json(array_agg(DISTINCT kind))::text, '[]') AS kinds_json,
+		COUNT(*) AS lead_count,
+		MAX(created_at) AS last_at
+		FROM site_leads
+		WHERE phone <> ''
+		  AND ($1::text = '' OR kind = $1)
+		  AND ($2::text = '' OR $2 = ANY(course_slugs))
+		GROUP BY phone
+		ORDER BY last_at DESC`
+	rows, err := r.db.QueryContext(ctx, query, kind, course)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := &SiteLeadPhones{Phones: []SiteLeadPhone{}}
+	for rows.Next() {
+		var item SiteLeadPhone
+		var kindsJSON string
+		if err := rows.Scan(&item.Phone, &item.Name, &item.Email, &kindsJSON, &item.LeadCount, &item.LastAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(kindsJSON), &item.Kinds); err != nil {
+			return nil, err
+		}
+		result.Phones = append(result.Phones, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	result.Count = len(result.Phones)
 	return result, nil
 }
 

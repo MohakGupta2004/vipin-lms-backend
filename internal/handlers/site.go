@@ -134,6 +134,36 @@ func (h *SiteHandler) ListSiteLeadEmails(w http.ResponseWriter, r *http.Request)
 	utils.WriteJSONResponse(w, http.StatusOK, result)
 }
 
+// ListSiteLeadPhones godoc
+//
+//	@Summary		List website lead phones
+//	@Description	Admin only. One row per distinct phone with newest lead's name/email, optionally filtered by kind and course slug.
+//	@Tags			admin-site
+//	@Produce		json
+//	@Param			kind	query		string	false	"masterclass, diagnostic, contact, firms, newsletter or interest"
+//	@Param			course	query		string	false	"Only leads containing this course slug"
+//	@Success		200		{object}	utils.JSONResponse{data=models.SiteLeadPhones}	"Phones"
+//	@Failure		400		{object}	utils.JSONResponse						"Invalid kind"
+//	@Failure		401		{object}	utils.JSONResponse						"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse						"Not an admin"
+//	@Failure		500		{object}	utils.JSONResponse						"Internal server error"
+//	@Router			/admin/site/leads/phones [get]
+func (h *SiteHandler) ListSiteLeadPhones(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	query := r.URL.Query()
+	result, err := h.siteService.ListLeadPhones(r.Context(), user, query.Get("kind"), query.Get("course"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, result)
+}
+
 // ListSiteVisitors godoc
 //
 //	@Summary		List website visitors

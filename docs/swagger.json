@@ -314,6 +314,76 @@
                 }
             }
         },
+        "/admin/site/leads/phones": {
+            "get": {
+                "description": "Admin only. One row per distinct phone with newest lead's name/email, optionally filtered by kind and course slug.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-site"
+                ],
+                "summary": "List website lead phones",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "masterclass, diagnostic, contact, firms, newsletter or interest",
+                        "name": "kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only leads containing this course slug",
+                        "name": "course",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Phones",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.SiteLeadPhones"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid kind",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/site/overview": {
             "get": {
                 "description": "Admin only. Aggregated website visitor, pageview and lead metrics for a UTC day window ending now.",
@@ -7826,6 +7896,46 @@
                     "type": "array",
                     "items": {
                         "type": "string"
+                    }
+                }
+            }
+        },
+        "models.SiteLeadPhone": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "kinds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "lastAt": {
+                    "type": "string"
+                },
+                "leadCount": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SiteLeadPhones": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "phones": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SiteLeadPhone"
                     }
                 }
             }

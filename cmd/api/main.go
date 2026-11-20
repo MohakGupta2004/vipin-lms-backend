@@ -177,6 +177,7 @@ func main() {
 	mux.Handle("GET /api/v1/admin/site/overview", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.GetSiteOverview)))
 	mux.Handle("GET /api/v1/admin/site/leads", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteLeads)))
 	mux.Handle("GET /api/v1/admin/site/leads/emails", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteLeadEmails)))
+	mux.Handle("GET /api/v1/admin/site/leads/phones", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteLeadPhones)))
 	mux.Handle("GET /api/v1/admin/site/visitors", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteVisitors)))
 	mux.Handle("GET /api/v1/admin/site/visitors/{id}/events", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteVisitorEvents)))
 	mux.Handle("GET /api/v1/admin/people", authMiddleware.RequireAuth(http.HandlerFunc(adminHandler.ListAdminPeople)))

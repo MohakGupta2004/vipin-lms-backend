@@ -1233,6 +1233,32 @@ definitions:
           type: string
         type: array
     type: object
+  models.SiteLeadPhone:
+    properties:
+      email:
+        type: string
+      kinds:
+        items:
+          type: string
+        type: array
+      lastAt:
+        type: string
+      leadCount:
+        type: integer
+      name:
+        type: string
+      phone:
+        type: string
+    type: object
+  models.SiteLeadPhones:
+    properties:
+      count:
+        type: integer
+      phones:
+        items:
+          $ref: '#/definitions/models.SiteLeadPhone'
+        type: array
+    type: object
   models.SiteLeadsPage:
     properties:
       items:
@@ -1863,6 +1889,50 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: List website lead emails
+      tags:
+      - admin-site
+  /admin/site/leads/phones:
+    get:
+      description: Admin only. One row per distinct phone with newest lead's name/email,
+        optionally filtered by kind and course slug.
+      parameters:
+      - description: masterclass, diagnostic, contact, firms, newsletter or interest
+        in: query
+        name: kind
+        type: string
+      - description: Only leads containing this course slug
+        in: query
+        name: course
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Phones
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.SiteLeadPhones'
+              type: object
+        "400":
+          description: Invalid kind
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List website lead phones
       tags:
       - admin-site
   /admin/site/overview:

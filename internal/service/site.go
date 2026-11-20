@@ -92,6 +92,18 @@ func (s *SiteService) ListLeadEmails(ctx context.Context, user *models.User, kin
 	return s.repo.ListLeadEmails(ctx, kind, course)
 }
 
+func (s *SiteService) ListLeadPhones(ctx context.Context, user *models.User, kind, course string) (*models.SiteLeadPhones, error) {
+	if user.Role != models.RoleAdmin {
+		return nil, ErrForbidden
+	}
+	kind = strings.TrimSpace(kind)
+	course = strings.TrimSpace(course)
+	if kind != "" && !isValidLeadKind(kind) {
+		return nil, fmt.Errorf("%w: kind must be one of masterclass, diagnostic, contact, firms, newsletter or interest", ErrInvalidInput)
+	}
+	return s.repo.ListLeadPhones(ctx, kind, course)
+}
+
 type SiteVisitorsFilter struct {
 	Returning bool
 	Limit     int

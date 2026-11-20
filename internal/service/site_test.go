@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func TestSiteServiceRejectsNonAdmin(t *testing.T) {
@@ -20,6 +22,9 @@ func TestSiteServiceRejectsNonAdmin(t *testing.T) {
 	}
 	if _, err := s.ListLeadEmails(context.Background(), student, "masterclass", ""); !errors.Is(err, ErrForbidden) {
 		t.Errorf("ListLeadEmails err = %v, want ErrForbidden", err)
+	}
+	if _, err := s.ListLeadPhones(context.Background(), student, "masterclass", ""); !errors.Is(err, ErrForbidden) {
+		t.Errorf("ListLeadPhones err = %v, want ErrForbidden", err)
 	}
 	if _, err := s.ListVisitors(context.Background(), student, SiteVisitorsFilter{}); !errors.Is(err, ErrForbidden) {
 		t.Errorf("ListVisitors err = %v, want ErrForbidden", err)
@@ -45,6 +50,26 @@ func TestSiteServiceValidatesDaysAndKinds(t *testing.T) {
 	}
 	if _, err := s.ListLeadEmails(context.Background(), admin, "", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("ListLeadEmails err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := s.ListLeadPhones(context.Background(), admin, "bad", ""); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("ListLeadPhones bad kind err = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestSiteServiceAllowsEmptyLeadPhoneKind(t *testing.T) {
+	// A closed database lets us check that an empty kind passes validation
+	// without needing a real database.
+	db, err := sql.Open("pgx", "postgres://user:pass@127.0.0.1:1/none?sslmode=disable")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	db.Close()
+
+	s := NewSiteService(models.NewSiteRepository(db))
+	admin := &models.User{ID: "00000000-0000-0000-0000-000000000004", Role: models.RoleAdmin}
+
+	if _, err := s.ListLeadPhones(context.Background(), admin, "", ""); errors.Is(err, ErrInvalidInput) {
+		t.Errorf("ListLeadPhones empty kind err = %v, want no validation error", err)
 	}
 }
 
