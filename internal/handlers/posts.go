@@ -156,7 +156,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrVideoNotFound),
 		errors.Is(err, service.ErrEnrollmentNotFound),
 		errors.Is(err, service.ErrStudentNotFound),
-		errors.Is(err, service.ErrSiteVisitorNotFound):
+		errors.Is(err, service.ErrSiteVisitorNotFound),
+		errors.Is(err, service.ErrDiagnosticResultNotFound):
 		utils.WriteJSONResponse(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled), errors.Is(err, service.ErrQuizHasAttempts), errors.Is(err, service.ErrDeckExists),
 		errors.Is(err, service.ErrVideoNotAwaitingUpload),

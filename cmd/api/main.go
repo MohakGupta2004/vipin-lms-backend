@@ -99,6 +99,7 @@ func main() {
 	studentRepo := models.NewStudentRepository(db)
 	siteRepo := models.NewSiteRepository(db)
 	adminRepo := models.NewAdminRepository(db)
+	diagnosticRepo := models.NewDiagnosticRepository(db)
 
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
@@ -118,6 +119,7 @@ func main() {
 	studentService := service.NewStudentService(studentRepo)
 	siteService := service.NewSiteService(siteRepo)
 	adminService := service.NewAdminService(adminRepo)
+	diagnosticService := service.NewDiagnosticService(diagnosticRepo)
 
 	// removes abandoned video uploads in the background; returns at once when GCS is disabled
 	videoMaintenanceDone := make(chan struct{})
@@ -151,6 +153,7 @@ func main() {
 	studentHandler := handlers.NewStudentHandler(studentService)
 	siteHandler := handlers.NewSiteHandler(siteService)
 	adminHandler := handlers.NewAdminHandler(adminService)
+	diagnosticHandler := handlers.NewDiagnosticHandler(diagnosticService)
 
 	// handlers
 	mux.HandleFunc("GET /api/v1/healthz", handlers.HealthHandler)
@@ -180,6 +183,8 @@ func main() {
 	mux.Handle("GET /api/v1/admin/site/leads/phones", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteLeadPhones)))
 	mux.Handle("GET /api/v1/admin/site/visitors", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteVisitors)))
 	mux.Handle("GET /api/v1/admin/site/visitors/{id}/events", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteVisitorEvents)))
+	mux.Handle("GET /api/v1/admin/diagnostic/results", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.ListResults)))
+	mux.Handle("GET /api/v1/admin/diagnostic/results/{id}", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.GetResult)))
 	mux.Handle("GET /api/v1/admin/people", authMiddleware.RequireAuth(http.HandlerFunc(adminHandler.ListAdminPeople)))
 	mux.Handle("GET /api/v1/admin/dashboard", authMiddleware.RequireAuth(http.HandlerFunc(adminHandler.GetAdminDashboard)))
 
@@ -209,6 +214,9 @@ func main() {
 
 	// exam routes (any logged-in user)
 	mux.Handle("GET /api/v1/exams", authMiddleware.RequireAuth(http.HandlerFunc(examHandler.ListExams)))
+
+	// diagnostic results (any logged-in user saves; admins list them)
+	mux.Handle("POST /api/v1/diagnostic/results", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.SaveResult)))
 
 	// enrollment routes (admin only, checked in the service)
 	mux.Handle("POST /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.CreateEnrollment)))

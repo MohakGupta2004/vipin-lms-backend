@@ -182,6 +182,21 @@ definitions:
         description: 1 (no idea) to 5 (perfect)
         type: integer
     type: object
+  handlers.SaveDiagnosticResultRequest:
+    properties:
+      answers:
+        items:
+          $ref: '#/definitions/models.DiagnosticAnswer'
+        type: array
+      correct:
+        type: integer
+      elements:
+        items:
+          $ref: '#/definitions/models.DiagnosticElementResult'
+        type: array
+      total:
+        type: integer
+    type: object
   handlers.SetDeckFreeRequest:
     properties:
       isFree:
@@ -488,6 +503,65 @@ definitions:
       totalStudents:
         type: integer
     type: object
+  models.AdminDiagnosticResult:
+    properties:
+      correct:
+        type: integer
+      createdAt:
+        type: string
+      elements:
+        items:
+          $ref: '#/definitions/models.DiagnosticElementResult'
+        type: array
+      email:
+        type: string
+      firstName:
+        type: string
+      id:
+        type: string
+      lastName:
+        type: string
+      total:
+        type: integer
+      userId:
+        type: string
+    type: object
+  models.AdminDiagnosticResultDetail:
+    properties:
+      answers:
+        items:
+          $ref: '#/definitions/models.DiagnosticAnswer'
+        type: array
+      correct:
+        type: integer
+      createdAt:
+        type: string
+      elements:
+        items:
+          $ref: '#/definitions/models.DiagnosticElementResult'
+        type: array
+      email:
+        type: string
+      firstName:
+        type: string
+      id:
+        type: string
+      lastName:
+        type: string
+      total:
+        type: integer
+      userId:
+        type: string
+    type: object
+  models.AdminDiagnosticResultsPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/models.AdminDiagnosticResult'
+        type: array
+      total:
+        type: integer
+    type: object
   models.AttemptAnswer:
     properties:
       correctOptionId:
@@ -650,6 +724,43 @@ definitions:
         description: |-
           WatchedSec approximates time spent watching: the full length of completed videos plus the
           position reached in the others.
+        type: integer
+    type: object
+  models.DiagnosticAnswer:
+    properties:
+      confidence:
+        type: string
+      picked:
+        type: integer
+      questionId:
+        type: integer
+    type: object
+  models.DiagnosticElementResult:
+    properties:
+      correct:
+        type: integer
+      element:
+        type: integer
+      maxPoints:
+        type: integer
+      points:
+        type: integer
+      total:
+        type: integer
+    type: object
+  models.DiagnosticResult:
+    properties:
+      correct:
+        type: integer
+      createdAt:
+        type: string
+      elements:
+        items:
+          $ref: '#/definitions/models.DiagnosticElementResult'
+        type: array
+      id:
+        type: string
+      total:
         type: integer
     type: object
   models.Enrollment:
@@ -1736,6 +1847,93 @@ paths:
       summary: Admin dashboard
       tags:
       - admin
+  /admin/diagnostic/results:
+    get:
+      description: Admin only. Newest first. q matches first name, last name or email.
+      parameters:
+      - description: Case-insensitive search on name or email
+        in: query
+        name: q
+        type: string
+      - description: Max results (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      - description: Number to skip (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Results
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.AdminDiagnosticResultsPage'
+              type: object
+        "400":
+          description: Invalid limit or offset
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List diagnostic results
+      tags:
+      - admin-diagnostic
+  /admin/diagnostic/results/{id}:
+    get:
+      description: Admin only. Same as a list item plus every answer.
+      parameters:
+      - description: Diagnostic result ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Result
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.AdminDiagnosticResultDetail'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Result not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Get one diagnostic result
+      tags:
+      - admin-diagnostic
   /admin/people:
     get:
       description: |-
@@ -3106,6 +3304,46 @@ paths:
       summary: Make a course public or private
       tags:
       - courses
+  /diagnostic/results:
+    post:
+      consumes:
+      - application/json
+      description: Any logged-in user. Stores the score, the nine element results
+        and up to 100 answers of a completed diagnostic test.
+      parameters:
+      - description: Diagnostic result
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SaveDiagnosticResultRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Saved
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.DiagnosticResult'
+              type: object
+        "400":
+          description: Malformed payload or invalid result
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Save a diagnostic result
+      tags:
+      - diagnostic
   /enrollments:
     get:
       description: Admin only. Newest first. Filter by courseId and/or userId.

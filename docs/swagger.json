@@ -72,6 +72,147 @@
                 }
             }
         },
+        "/admin/diagnostic/results": {
+            "get": {
+                "description": "Admin only. Newest first. q matches first name, last name or email.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-diagnostic"
+                ],
+                "summary": "List diagnostic results",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Case-insensitive search on name or email",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number to skip (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Results",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.AdminDiagnosticResultsPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid limit or offset",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/diagnostic/results/{id}": {
+            "get": {
+                "description": "Admin only. Same as a list item plus every answer.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-diagnostic"
+                ],
+                "summary": "Get one diagnostic result",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Diagnostic result ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Result",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.AdminDiagnosticResultDetail"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Result not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/people": {
             "get": {
                 "description": "Admin only. Students of one view: new, never_logged_in, not_enrolled or recently_enrolled.\nEvery person carries all of their enrollments, newest first.",
@@ -2189,6 +2330,70 @@
                     },
                     "404": {
                         "description": "Course not found, or not owned by this user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/diagnostic/results": {
+            "post": {
+                "description": "Any logged-in user. Stores the score, the nine element results and up to 100 answers of a completed diagnostic test.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostic"
+                ],
+                "summary": "Save a diagnostic result",
+                "parameters": [
+                    {
+                        "description": "Diagnostic result",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SaveDiagnosticResultRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Saved",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.DiagnosticResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or invalid result",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -6386,6 +6591,29 @@
                 }
             }
         },
+        "handlers.SaveDiagnosticResultRequest": {
+            "type": "object",
+            "properties": {
+                "answers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiagnosticAnswer"
+                    }
+                },
+                "correct": {
+                    "type": "integer"
+                },
+                "elements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiagnosticElementResult"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.SetDeckFreeRequest": {
             "type": "object",
             "properties": {
@@ -6841,6 +7069,96 @@
                 }
             }
         },
+        "models.AdminDiagnosticResult": {
+            "type": "object",
+            "properties": {
+                "correct": {
+                    "type": "integer"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "elements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiagnosticElementResult"
+                    }
+                },
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.AdminDiagnosticResultDetail": {
+            "type": "object",
+            "properties": {
+                "answers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiagnosticAnswer"
+                    }
+                },
+                "correct": {
+                    "type": "integer"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "elements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiagnosticElementResult"
+                    }
+                },
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.AdminDiagnosticResultsPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.AdminDiagnosticResult"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "models.AttemptAnswer": {
             "type": "object",
             "properties": {
@@ -7054,6 +7372,63 @@
                 },
                 "watchedSec": {
                     "description": "WatchedSec approximates time spent watching: the full length of completed videos plus the\nposition reached in the others.",
+                    "type": "integer"
+                }
+            }
+        },
+        "models.DiagnosticAnswer": {
+            "type": "object",
+            "properties": {
+                "confidence": {
+                    "type": "string"
+                },
+                "picked": {
+                    "type": "integer"
+                },
+                "questionId": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.DiagnosticElementResult": {
+            "type": "object",
+            "properties": {
+                "correct": {
+                    "type": "integer"
+                },
+                "element": {
+                    "type": "integer"
+                },
+                "maxPoints": {
+                    "type": "integer"
+                },
+                "points": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.DiagnosticResult": {
+            "type": "object",
+            "properties": {
+                "correct": {
+                    "type": "integer"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "elements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiagnosticElementResult"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "total": {
                     "type": "integer"
                 }
             }

@@ -38,3 +38,4 @@ gcp-*.json
 # local secrets and air build output
 key.txt
 tmp/
+.redesign/
