@@ -217,6 +217,7 @@ func main() {
 
 	// diagnostic results (any logged-in user saves; admins list them)
 	mux.Handle("POST /api/v1/diagnostic/results", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.SaveResult)))
+	mux.Handle("GET /api/v1/diagnostic/status", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.Status)))
 
 	// enrollment routes (admin only, checked in the service)
 	mux.Handle("POST /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.CreateEnrollment)))

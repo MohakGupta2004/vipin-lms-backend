@@ -159,7 +159,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrSiteVisitorNotFound),
 		errors.Is(err, service.ErrDiagnosticResultNotFound):
 		utils.WriteJSONResponse(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled), errors.Is(err, service.ErrQuizHasAttempts), errors.Is(err, service.ErrDeckExists),
+	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled), errors.Is(err, service.ErrQuizHasAttempts), errors.Is(err, service.ErrDeckExists), errors.Is(err, service.ErrDiagnosticAlreadyTaken),
 		errors.Is(err, service.ErrVideoNotAwaitingUpload),
 		errors.Is(err, service.ErrVideoNotReady),
 		errors.Is(err, service.ErrVideoProcessing):

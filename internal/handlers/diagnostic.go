@@ -22,6 +22,10 @@ type SaveDiagnosticResultRequest struct {
 	Answers  []models.DiagnosticAnswer        `json:"answers"`
 }
 
+type DiagnosticStatusResponse struct {
+	Taken bool `json:"taken"`
+}
+
 type DiagnosticHandler struct {
 	diagnosticService *service.DiagnosticService
 }
@@ -33,7 +37,7 @@ func NewDiagnosticHandler(diagnosticService *service.DiagnosticService) *Diagnos
 // SaveResult godoc
 //
 //	@Summary		Save a diagnostic result
-//	@Description	Any logged-in user. Stores the score, the nine element results and up to 100 answers of a completed diagnostic test.
+//	@Description	Any logged-in user. Stores the score, the nine element results and up to 100 answers of a completed diagnostic test. Each email can submit only once. The response has no score: only admins can see results.
 //	@Tags			diagnostic
 //	@Accept			json
 //	@Produce		json
@@ -41,6 +45,7 @@ func NewDiagnosticHandler(diagnosticService *service.DiagnosticService) *Diagnos
 //	@Success		201		{object}	utils.JSONResponse{data=models.DiagnosticResult}	"Saved"
 //	@Failure		400		{object}	utils.JSONResponse							"Malformed payload or invalid result"
 //	@Failure		401		{object}	utils.JSONResponse							"Not logged in"
+//	@Failure		409		{object}	utils.JSONResponse							"Diagnostic test already taken"
 //	@Failure		500		{object}	utils.JSONResponse							"Internal server error"
 //	@Router			/diagnostic/results [post]
 func (h *DiagnosticHandler) SaveResult(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +73,31 @@ func (h *DiagnosticHandler) SaveResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteJSONResponse(w, http.StatusCreated, result)
+}
+
+// Status godoc
+//
+//	@Summary		Did I already take the diagnostic test
+//	@Description	Any logged-in user. The frontend uses this to block a second attempt.
+//	@Tags			diagnostic
+//	@Produce		json
+//	@Success		200	{object}	utils.JSONResponse{data=DiagnosticStatusResponse}	"Status"
+//	@Failure		401	{object}	utils.JSONResponse								"Not logged in"
+//	@Failure		500	{object}	utils.JSONResponse								"Internal server error"
+//	@Router			/diagnostic/status [get]
+func (h *DiagnosticHandler) Status(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	taken, err := h.diagnosticService.HasTaken(r.Context(), user)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, DiagnosticStatusResponse{Taken: taken})
 }
 
 // ListResults godoc

@@ -11,6 +11,7 @@ import (
 )
 
 var ErrDiagnosticResultNotFound = errors.New("diagnostic result not found")
+var ErrDiagnosticAlreadyTaken = errors.New("the diagnostic test was already taken with this email")
 
 const (
 	defaultDiagnosticLimit = 50
@@ -37,11 +38,21 @@ type SaveDiagnosticResultInput struct {
 }
 
 // SaveResult checks one diagnostic submission and stores it for the logged-in user.
+// Each user (one email) can take the diagnostic test only once.
 func (s *DiagnosticService) SaveResult(ctx context.Context, user *models.User, input SaveDiagnosticResultInput) (*models.DiagnosticResult, error) {
 	if err := validateDiagnosticResult(input); err != nil {
 		return nil, err
 	}
-	return s.repo.Create(ctx, user.ID, input.Correct, input.Total, input.Elements, input.Answers)
+	result, err := s.repo.Create(ctx, user.ID, input.Correct, input.Total, input.Elements, input.Answers)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrDiagnosticAlreadyTaken
+	}
+	return result, err
+}
+
+// HasTaken tells if the logged-in user already took the diagnostic test.
+func (s *DiagnosticService) HasTaken(ctx context.Context, user *models.User) (bool, error) {
+	return s.repo.HasTaken(ctx, user.ID)
 }
 
 type DiagnosticResultsFilter struct {

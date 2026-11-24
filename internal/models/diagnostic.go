@@ -23,13 +23,11 @@ type DiagnosticAnswer struct {
 	Confidence string `json:"confidence"`
 }
 
-// DiagnosticResult is the row returned right after a user saves a result.
+// DiagnosticResult is returned right after a user saves a result.
+// It has no score on purpose: only admins can see results.
 type DiagnosticResult struct {
-	ID        string                    `json:"id"`
-	Correct   int                       `json:"correct"`
-	Total     int                       `json:"total"`
-	Elements  []DiagnosticElementResult `json:"elements"`
-	CreatedAt time.Time                 `json:"createdAt"`
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // AdminDiagnosticResult is a row in the admin list.
@@ -65,6 +63,7 @@ func NewDiagnosticRepository(db *sql.DB) *DiagnosticRepository {
 }
 
 // Create saves one diagnostic result and returns its id and creation time.
+// It returns sql.ErrNoRows when this user already has a result.
 func (r *DiagnosticRepository) Create(ctx context.Context, userID string, correct, total int, elements []DiagnosticElementResult, answers []DiagnosticAnswer) (*DiagnosticResult, error) {
 	elementsJSON, err := json.Marshal(elements)
 	if err != nil {
@@ -75,13 +74,10 @@ func (r *DiagnosticRepository) Create(ctx context.Context, userID string, correc
 		return nil, err
 	}
 
-	result := &DiagnosticResult{
-		Correct:  correct,
-		Total:    total,
-		Elements: elements,
-	}
+	result := &DiagnosticResult{}
 	query := `INSERT INTO diagnostic_results (user_id, correct, total, elements, answers)
 		VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+		ON CONFLICT (user_id) DO NOTHING
 		RETURNING id, created_at`
 	err = r.db.QueryRowContext(ctx, query, userID, correct, total, string(elementsJSON), string(answersJSON)).
 		Scan(&result.ID, &result.CreatedAt)
@@ -89,6 +85,14 @@ func (r *DiagnosticRepository) Create(ctx context.Context, userID string, correc
 		return nil, err
 	}
 	return result, nil
+}
+
+// HasTaken tells if the user already has a diagnostic result.
+func (r *DiagnosticRepository) HasTaken(ctx context.Context, userID string) (bool, error) {
+	var taken bool
+	query := `SELECT EXISTS (SELECT 1 FROM diagnostic_results WHERE user_id = $1)`
+	err := r.db.QueryRowContext(ctx, query, userID).Scan(&taken)
+	return taken, err
 }
 
 // List returns one page of results, newest first, with the user's name and email.

@@ -144,6 +144,11 @@ definitions:
         description: mock_test or practice, defaults to mock_test
         type: string
     type: object
+  handlers.DiagnosticStatusResponse:
+    properties:
+      taken:
+        type: boolean
+    type: object
   handlers.ForgotPasswordRequest:
     properties:
       email:
@@ -750,18 +755,10 @@ definitions:
     type: object
   models.DiagnosticResult:
     properties:
-      correct:
-        type: integer
       createdAt:
         type: string
-      elements:
-        items:
-          $ref: '#/definitions/models.DiagnosticElementResult'
-        type: array
       id:
         type: string
-      total:
-        type: integer
     type: object
   models.Enrollment:
     properties:
@@ -3308,8 +3305,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Any logged-in user. Stores the score, the nine element results
-        and up to 100 answers of a completed diagnostic test.
+      description: 'Any logged-in user. Stores the score, the nine element results
+        and up to 100 answers of a completed diagnostic test. Each email can submit
+        only once. The response has no score: only admins can see results.'
       parameters:
       - description: Diagnostic result
         in: body
@@ -3337,11 +3335,41 @@ paths:
           description: Not logged in
           schema:
             $ref: '#/definitions/utils.JSONResponse'
+        "409":
+          description: Diagnostic test already taken
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
         "500":
           description: Internal server error
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Save a diagnostic result
+      tags:
+      - diagnostic
+  /diagnostic/status:
+    get:
+      description: Any logged-in user. The frontend uses this to block a second attempt.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Status
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.DiagnosticStatusResponse'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Did I already take the diagnostic test
       tags:
       - diagnostic
   /enrollments:

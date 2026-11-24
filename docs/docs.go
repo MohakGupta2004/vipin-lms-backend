@@ -2352,7 +2352,7 @@ const docTemplate = `{
         },
         "/diagnostic/results": {
             "post": {
-                "description": "Any logged-in user. Stores the score, the nine element results and up to 100 answers of a completed diagnostic test.",
+                "description": "Any logged-in user. Stores the score, the nine element results and up to 100 answers of a completed diagnostic test. Each email can submit only once. The response has no score: only admins can see results.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2397,6 +2397,56 @@ const docTemplate = `{
                         "description": "Malformed payload or invalid result",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Diagnostic test already taken",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/diagnostic/status": {
+            "get": {
+                "description": "Any logged-in user. The frontend uses this to block a second attempt.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostic"
+                ],
+                "summary": "Did I already take the diagnostic test",
+                "responses": {
+                    "200": {
+                        "description": "Status",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/handlers.DiagnosticStatusResponse"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "401": {
@@ -6539,6 +6589,14 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.DiagnosticStatusResponse": {
+            "type": "object",
+            "properties": {
+                "taken": {
+                    "type": "boolean"
+                }
+            }
+        },
         "handlers.ForgotPasswordRequest": {
             "type": "object",
             "properties": {
@@ -7420,23 +7478,11 @@ const docTemplate = `{
         "models.DiagnosticResult": {
             "type": "object",
             "properties": {
-                "correct": {
-                    "type": "integer"
-                },
                 "createdAt": {
                     "type": "string"
                 },
-                "elements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.DiagnosticElementResult"
-                    }
-                },
                 "id": {
                     "type": "string"
-                },
-                "total": {
-                    "type": "integer"
                 }
             }
         },
