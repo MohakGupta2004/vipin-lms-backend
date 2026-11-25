@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/email"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/lib/utils"
@@ -37,6 +38,17 @@ type EmailDiagnosticResultRequest struct {
 	To string `json:"to"`
 	// Note is a personal message of up to 1000 characters, shown above the results.
 	Note string `json:"note"`
+}
+
+// LockDiagnosticResultRequest locks or unlocks a result for the student who took it.
+type LockDiagnosticResultRequest struct {
+	// Locked false lets the student see their result; true hides it again.
+	Locked *bool `json:"locked"`
+}
+
+type LockDiagnosticResultResponse struct {
+	// UnlockedAt is when the result was unlocked; null while it is locked.
+	UnlockedAt *time.Time `json:"unlockedAt"`
 }
 
 type EmailDiagnosticResultResponse struct {
@@ -135,7 +147,7 @@ func (h *DiagnosticHandler) GetQuestions(w http.ResponseWriter, r *http.Request)
 // SaveResult godoc
 //
 //	@Summary		Save a diagnostic result
-//	@Description	Any logged-in user. Scores up to 100 answers of a completed diagnostic test on the server and stores the score, the per-element results and the answers. testSlug names the test (default cire-advanced). Questions left out count as skipped. Each email can submit each test only once. The response has no score: only admins can see results.
+//	@Description	Any logged-in user. Scores up to 100 answers of a completed diagnostic test on the server and stores the score, the per-element results and the answers. testSlug names the test (default cire-advanced). Questions left out count as skipped. Each email can submit each test only once. The response has no score: the result stays locked until an admin unlocks it.
 //	@Tags			diagnostic
 //	@Accept			json
 //	@Produce		json
@@ -202,7 +214,7 @@ func (h *DiagnosticHandler) Status(w http.ResponseWriter, r *http.Request) {
 // ListResults godoc
 //
 //	@Summary		List diagnostic results
-//	@Description	Admin only. Newest first, one page at a time. q matches first name, last name or email; test keeps only one test's results. Each item names the test it is for.
+//	@Description	Admin only. Newest first, one page at a time. unlockedAt is null while the student cannot see the result. q matches first name, last name or email; test keeps only one test's results. Each item names the test it is for.
 //	@Tags			admin-diagnostic
 //	@Produce		json
 //	@Param			q		query		string	false	"Case-insensitive search on name or email"
@@ -318,4 +330,74 @@ func (h *DiagnosticHandler) EmailResult(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	utils.WriteJSONResponse(w, http.StatusAccepted, EmailDiagnosticResultResponse{To: to})
+}
+
+// GetMyResult godoc
+//
+//	@Summary		Get my diagnostic result
+//	@Description	Any logged-in user. Their own score and per-element breakdown for one test, once an admin has unlocked it. Never includes the answers or the answer key. GET /diagnostic/tests/{slug} says whether it is unlocked.
+//	@Tags			diagnostic
+//	@Produce		json
+//	@Param			slug	path		string	true	"Diagnostic test slug, e.g. cire-advanced"
+//	@Success		200		{object}	utils.JSONResponse{data=models.MyDiagnosticResult}	"Result"
+//	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse								"Result still locked"
+//	@Failure		404		{object}	utils.JSONResponse								"No active test with this slug, or not taken yet"
+//	@Failure		500		{object}	utils.JSONResponse								"Internal server error"
+//	@Router			/diagnostic/tests/{slug}/result [get]
+func (h *DiagnosticHandler) GetMyResult(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	result, err := h.diagnosticService.GetMyResult(r.Context(), user, r.PathValue("slug"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, result)
+}
+
+// LockResult godoc
+//
+//	@Summary		Lock or unlock a diagnostic result
+//	@Description	Admin only. locked false lets the student see their own score and chapter breakdown on their diagnostic page; true hides it again. Unlocking an unlocked result keeps its first unlock time.
+//	@Tags			admin-diagnostic
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string						true	"Diagnostic result ID"
+//	@Param			request	body		LockDiagnosticResultRequest	true	"Lock or unlock"
+//	@Success		200		{object}	utils.JSONResponse{data=LockDiagnosticResultResponse}	"Updated"
+//	@Failure		400		{object}	utils.JSONResponse									"Malformed payload or locked missing"
+//	@Failure		401		{object}	utils.JSONResponse									"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse									"Not an admin"
+//	@Failure		404		{object}	utils.JSONResponse									"Result not found"
+//	@Failure		500		{object}	utils.JSONResponse									"Internal server error"
+//	@Router			/admin/diagnostic/results/{id}/lock [patch]
+func (h *DiagnosticHandler) LockResult(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxDiagnosticEmailBodyBytes)
+	var req LockDiagnosticResultRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
+		return
+	}
+	if req.Locked == nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "locked is required")
+		return
+	}
+
+	unlockedAt, err := h.diagnosticService.SetResultLocked(r.Context(), user, r.PathValue("id"), *req.Locked)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, LockDiagnosticResultResponse{UnlockedAt: unlockedAt})
 }

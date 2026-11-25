@@ -9,6 +9,7 @@ import (
 	"net/mail"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/email"
@@ -18,6 +19,8 @@ import (
 var ErrDiagnosticResultNotFound = errors.New("diagnostic result not found")
 var ErrDiagnosticTestNotFound = errors.New("diagnostic test not found")
 var ErrDiagnosticAlreadyTaken = errors.New("the diagnostic test was already taken with this email")
+var ErrDiagnosticNotTaken = errors.New("you have not taken this diagnostic test")
+var ErrDiagnosticResultLocked = errors.New("your result is locked until it is unlocked for you")
 
 const (
 	defaultDiagnosticLimit = 50
@@ -116,7 +119,7 @@ func (s *DiagnosticService) GetQuestions(ctx context.Context, user *models.User,
 }
 
 // SaveResult scores one diagnostic attempt on the server and stores it for the logged-in user.
-// The answer key never leaves the server and the score is never returned: only admins can see results.
+// The answer key never leaves the server and the score is not returned: the student sees it only once an admin unlocks it.
 // Each user (one email) can take each diagnostic test only once.
 func (s *DiagnosticService) SaveResult(ctx context.Context, user *models.User, input SaveDiagnosticResultInput) (*models.DiagnosticResult, error) {
 	if err := validateDiagnosticAnswers(input.Answers); err != nil {
@@ -142,6 +145,48 @@ func (s *DiagnosticService) SaveResult(ctx context.Context, user *models.User, i
 		return nil, ErrDiagnosticAlreadyTaken
 	}
 	return result, err
+}
+
+// GetMyResult returns the logged-in user's own result for a test once an admin has unlocked it:
+// the score and the per-element breakdown, never the answers or the answer key.
+func (s *DiagnosticService) GetMyResult(ctx context.Context, user *models.User, slug string) (*models.MyDiagnosticResult, error) {
+	test, err := s.GetTest(ctx, user, slug)
+	if err != nil {
+		return nil, err
+	}
+	if !test.Taken {
+		return nil, ErrDiagnosticNotTaken
+	}
+	if !test.Unlocked {
+		return nil, ErrDiagnosticResultLocked
+	}
+	result, unlockedAt, err := s.repo.GetMine(ctx, user.ID, test.Slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrDiagnosticNotTaken
+	}
+	if err != nil {
+		return nil, err
+	}
+	if unlockedAt == nil { // locked again between the two queries
+		return nil, ErrDiagnosticResultLocked
+	}
+	return result, nil
+}
+
+// SetResultLocked locks or unlocks one result for the student who took it, and returns when it was
+// unlocked (nil once locked). Admin only. Unlocking twice keeps the first unlock time.
+func (s *DiagnosticService) SetResultLocked(ctx context.Context, user *models.User, id string, locked bool) (*time.Time, error) {
+	if user.Role != models.RoleAdmin {
+		return nil, ErrForbidden
+	}
+	if !uuidPattern.MatchString(id) {
+		return nil, ErrDiagnosticResultNotFound
+	}
+	unlockedAt, err := s.repo.SetUnlocked(ctx, id, !locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrDiagnosticResultNotFound
+	}
+	return unlockedAt, err
 }
 
 type DiagnosticResultsFilter struct {

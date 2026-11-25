@@ -186,6 +186,7 @@ func main() {
 	mux.Handle("GET /api/v1/admin/site/visitors/{id}/events", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteVisitorEvents)))
 	mux.Handle("GET /api/v1/admin/diagnostic/results", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.ListResults)))
 	mux.Handle("GET /api/v1/admin/diagnostic/results/{id}", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.GetResult)))
+	mux.Handle("PATCH /api/v1/admin/diagnostic/results/{id}/lock", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.LockResult)))
 	mux.Handle("POST /api/v1/admin/diagnostic/results/{id}/email", limit(30)(authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.EmailResult))))
 	mux.Handle("GET /api/v1/admin/people", authMiddleware.RequireAuth(http.HandlerFunc(adminHandler.ListAdminPeople)))
 	mux.Handle("GET /api/v1/admin/dashboard", authMiddleware.RequireAuth(http.HandlerFunc(adminHandler.GetAdminDashboard)))
@@ -223,6 +224,7 @@ func main() {
 	mux.Handle("GET /api/v1/diagnostic/tests", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.ListTests)))
 	mux.Handle("GET /api/v1/diagnostic/tests/{slug}", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.GetTest)))
 	mux.Handle("GET /api/v1/diagnostic/tests/{slug}/questions", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.GetQuestions)))
+	mux.Handle("GET /api/v1/diagnostic/tests/{slug}/result", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.GetMyResult)))
 
 	// enrollment routes (admin only, checked in the service)
 	mux.Handle("POST /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.CreateEnrollment)))

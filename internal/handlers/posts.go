@@ -144,7 +144,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrInvalidInput):
 		utils.WriteJSONResponse(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, service.ErrForbidden), errors.Is(err, service.ErrBadStreamSignature):
+	case errors.Is(err, service.ErrForbidden), errors.Is(err, service.ErrBadStreamSignature), errors.Is(err, service.ErrDiagnosticResultLocked):
 		utils.WriteJSONResponse(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, service.ErrPostNotFound),
 		errors.Is(err, service.ErrNoteNotFound),
@@ -158,7 +158,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrStudentNotFound),
 		errors.Is(err, service.ErrSiteVisitorNotFound),
 		errors.Is(err, service.ErrDiagnosticResultNotFound),
-		errors.Is(err, service.ErrDiagnosticTestNotFound):
+		errors.Is(err, service.ErrDiagnosticTestNotFound),
+		errors.Is(err, service.ErrDiagnosticNotTaken):
 		utils.WriteJSONResponse(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, service.ErrSlugTaken), errors.Is(err, service.ErrAlreadyEnrolled), errors.Is(err, service.ErrQuizHasAttempts), errors.Is(err, service.ErrDeckExists), errors.Is(err, service.ErrDiagnosticAlreadyTaken),
 		errors.Is(err, service.ErrVideoNotAwaitingUpload),

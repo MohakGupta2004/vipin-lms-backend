@@ -81,7 +81,7 @@ const docTemplate = `{
         },
         "/admin/diagnostic/results": {
             "get": {
-                "description": "Admin only. Newest first, one page at a time. q matches first name, last name or email; test keeps only one test's results. Each item names the test it is for.",
+                "description": "Admin only. Newest first, one page at a time. unlockedAt is null while the student cannot see the result. q matches first name, last name or email; test keeps only one test's results. Each item names the test it is for.",
                 "produces": [
                     "application/json"
                 ],
@@ -307,6 +307,89 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "Email queue busy, try again shortly",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/diagnostic/results/{id}/lock": {
+            "patch": {
+                "description": "Admin only. locked false lets the student see their own score and chapter breakdown on their diagnostic page; true hides it again. Unlocking an unlocked result keeps its first unlock time.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-diagnostic"
+                ],
+                "summary": "Lock or unlock a diagnostic result",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Diagnostic result ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Lock or unlock",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.LockDiagnosticResultRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/handlers.LockDiagnosticResultResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload or locked missing",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Result not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -2446,7 +2529,7 @@ const docTemplate = `{
         },
         "/diagnostic/results": {
             "post": {
-                "description": "Any logged-in user. Scores up to 100 answers of a completed diagnostic test on the server and stores the score, the per-element results and the answers. testSlug names the test (default cire-advanced). Questions left out count as skipped. Each email can submit each test only once. The response has no score: only admins can see results.",
+                "description": "Any logged-in user. Scores up to 100 answers of a completed diagnostic test on the server and stores the score, the per-element results and the answers. testSlug names the test (default cire-advanced). Questions left out count as skipped. Each email can submit each test only once. The response has no score: the result stays locked until an admin unlocks it.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2739,6 +2822,71 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Diagnostic test already taken",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/diagnostic/tests/{slug}/result": {
+            "get": {
+                "description": "Any logged-in user. Their own score and per-element breakdown for one test, once an admin has unlocked it. Never includes the answers or the answer key. GET /diagnostic/tests/{slug} says whether it is unlocked.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostic"
+                ],
+                "summary": "Get my diagnostic result",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Diagnostic test slug, e.g. cire-advanced",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Result",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.MyDiagnosticResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Result still locked",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "No active test with this slug, or not taken yet",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -6915,6 +7063,24 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.LockDiagnosticResultRequest": {
+            "type": "object",
+            "properties": {
+                "locked": {
+                    "description": "Locked false lets the student see their result; true hides it again.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "handlers.LockDiagnosticResultResponse": {
+            "type": "object",
+            "properties": {
+                "unlockedAt": {
+                    "description": "UnlockedAt is when the result was unlocked; null while it is locked.",
+                    "type": "string"
+                }
+            }
+        },
         "handlers.LoginRequest": {
             "type": "object",
             "properties": {
@@ -7472,6 +7638,10 @@ const docTemplate = `{
                 "total": {
                     "type": "integer"
                 },
+                "unlockedAt": {
+                    "description": "UnlockedAt is when an admin let the student see this result; null while it is locked.",
+                    "type": "string"
+                },
                 "userId": {
                     "type": "string"
                 }
@@ -7524,6 +7694,10 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                },
+                "unlockedAt": {
+                    "description": "UnlockedAt is when an admin let the student see this result; null while it is locked.",
+                    "type": "string"
                 },
                 "userId": {
                     "type": "string"
@@ -7878,6 +8052,10 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                },
+                "unlocked": {
+                    "description": "Unlocked means an admin unlocked this user's result, so GET /diagnostic/tests/{slug}/result returns it.",
+                    "type": "boolean"
                 }
             }
         },
@@ -8091,6 +8269,35 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "models.MyDiagnosticResult": {
+            "type": "object",
+            "properties": {
+                "correct": {
+                    "type": "integer"
+                },
+                "elements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiagnosticElementResult"
+                    }
+                },
+                "takenAt": {
+                    "type": "string"
+                },
+                "testSlug": {
+                    "type": "string"
+                },
+                "testTitle": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "unlockedAt": {
+                    "type": "string"
                 }
             }
         },

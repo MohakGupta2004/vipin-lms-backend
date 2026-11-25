@@ -231,3 +231,26 @@ func TestDiagnosticEmailData(t *testing.T) {
 		t.Errorf("level 50 = %q", got)
 	}
 }
+
+func TestDiagnosticServiceSetResultLockedChecks(t *testing.T) {
+	s := NewDiagnosticService(nil, nil)
+	id := "00000000-0000-0000-0000-000000000002"
+	student := &models.User{ID: "00000000-0000-0000-0000-000000000001", Role: models.RoleStudent}
+	for _, locked := range []bool{true, false} {
+		if _, err := s.SetResultLocked(context.Background(), student, id, locked); !errors.Is(err, ErrForbidden) {
+			t.Errorf("student locked=%v err = %v, want ErrForbidden", locked, err)
+		}
+	}
+	admin := &models.User{ID: "00000000-0000-0000-0000-000000000003", Role: models.RoleAdmin}
+	if _, err := s.SetResultLocked(context.Background(), admin, "not-a-uuid", false); !errors.Is(err, ErrDiagnosticResultNotFound) {
+		t.Errorf("bad id err = %v, want ErrDiagnosticResultNotFound", err)
+	}
+}
+
+func TestDiagnosticServiceGetMyResultRejectsBadSlug(t *testing.T) {
+	s := NewDiagnosticService(nil, nil)
+	student := &models.User{ID: "00000000-0000-0000-0000-000000000001", Role: models.RoleStudent}
+	if _, err := s.GetMyResult(context.Background(), student, "Not A Slug"); !errors.Is(err, ErrDiagnosticTestNotFound) {
+		t.Errorf("err = %v, want ErrDiagnosticTestNotFound", err)
+	}
+}

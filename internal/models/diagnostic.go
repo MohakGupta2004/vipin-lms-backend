@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// DiagnosticTest is one diagnostic a student can take, with whether this user already took it.
-// It never carries a score: only admins can see results.
+// DiagnosticTest is one diagnostic a student can take, with whether this user already took it
+// and whether an admin has unlocked their result. It never carries a score.
 type DiagnosticTest struct {
 	ID              string     `json:"id"`
 	Slug            string     `json:"slug"`
@@ -20,6 +20,8 @@ type DiagnosticTest struct {
 	DurationMinutes int        `json:"durationMinutes"`
 	Taken           bool       `json:"taken"`
 	TakenAt         *time.Time `json:"takenAt"`
+	// Unlocked means an admin unlocked this user's result, so GET /diagnostic/tests/{slug}/result returns it.
+	Unlocked bool `json:"unlocked"`
 }
 
 // DiagnosticQuestionKey is a question with its chapter and correct answer. It is used to score
@@ -56,7 +58,7 @@ type DiagnosticAnswer struct {
 }
 
 // DiagnosticResult is returned right after a user saves a result.
-// It has no score on purpose: only admins can see results.
+// It has no score on purpose: the student sees it only once an admin unlocks it.
 type DiagnosticResult struct {
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -75,6 +77,20 @@ type AdminDiagnosticResult struct {
 	Total     int                       `json:"total"`
 	Elements  []DiagnosticElementResult `json:"elements"`
 	CreatedAt time.Time                 `json:"createdAt"`
+	// UnlockedAt is when an admin let the student see this result; null while it is locked.
+	UnlockedAt *time.Time `json:"unlockedAt"`
+}
+
+// MyDiagnosticResult is a student's own unlocked result: the score and the per-element breakdown.
+// It never includes the answers or the answer key.
+type MyDiagnosticResult struct {
+	TestSlug   string                    `json:"testSlug"`
+	TestTitle  string                    `json:"testTitle"`
+	Correct    int                       `json:"correct"`
+	Total      int                       `json:"total"`
+	Elements   []DiagnosticElementResult `json:"elements"`
+	TakenAt    time.Time                 `json:"takenAt"`
+	UnlockedAt time.Time                 `json:"unlockedAt"`
 }
 
 // AdminDiagnosticResultDetail is the admin list row plus every answer and the test's questions with their answers.
@@ -101,7 +117,7 @@ func NewDiagnosticRepository(db *sql.DB) *DiagnosticRepository {
 const diagnosticTestColumns = `t.id, t.slug, t.title, t.description,
 		COALESCE(e.code, ''), COALESCE(e.name, ''),
 		(SELECT COUNT(*) FROM diagnostic_questions q WHERE q.test_id = t.id),
-		t.duration_minutes, dr.created_at`
+		t.duration_minutes, dr.created_at, dr.unlocked_at`
 
 const diagnosticTestFrom = `FROM diagnostic_tests t
 		LEFT JOIN exams e ON e.id = t.exam_id
@@ -109,6 +125,7 @@ const diagnosticTestFrom = `FROM diagnostic_tests t
 
 func scanDiagnosticTest(row interface{ Scan(...any) error }) (*DiagnosticTest, error) {
 	var test DiagnosticTest
+	var unlockedAt *time.Time
 	err := row.Scan(
 		&test.ID,
 		&test.Slug,
@@ -119,11 +136,13 @@ func scanDiagnosticTest(row interface{ Scan(...any) error }) (*DiagnosticTest, e
 		&test.QuestionCount,
 		&test.DurationMinutes,
 		&test.TakenAt,
+		&unlockedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	test.Taken = test.TakenAt != nil
+	test.Unlocked = unlockedAt != nil
 	return &test, nil
 }
 
@@ -227,7 +246,7 @@ func (r *DiagnosticRepository) List(ctx context.Context, q, testSlug string, lim
 	}
 
 	queryItems := `SELECT dr.id, dr.user_id, u.first_name, u.last_name, u.email,
-		t.slug, t.title, dr.correct, dr.total, dr.elements::text, dr.created_at
+		t.slug, t.title, dr.correct, dr.total, dr.elements::text, dr.created_at, dr.unlocked_at
 		FROM diagnostic_results dr
 		JOIN users u ON u.id = dr.user_id
 		JOIN diagnostic_tests t ON t.id = dr.test_id
@@ -257,6 +276,7 @@ func (r *DiagnosticRepository) List(ctx context.Context, q, testSlug string, lim
 			&item.Total,
 			&elementsJSON,
 			&item.CreatedAt,
+			&item.UnlockedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -277,7 +297,7 @@ func (r *DiagnosticRepository) List(ctx context.Context, q, testSlug string, lim
 // Get returns one result with the user and every answer. It returns sql.ErrNoRows when missing.
 func (r *DiagnosticRepository) Get(ctx context.Context, id string) (*AdminDiagnosticResultDetail, error) {
 	query := `SELECT dr.id, dr.user_id, u.first_name, u.last_name, u.email,
-		t.id, t.slug, t.title, dr.correct, dr.total, dr.elements::text, dr.answers::text, dr.created_at
+		t.id, t.slug, t.title, dr.correct, dr.total, dr.elements::text, dr.answers::text, dr.created_at, dr.unlocked_at
 		FROM diagnostic_results dr
 		JOIN users u ON u.id = dr.user_id
 		JOIN diagnostic_tests t ON t.id = dr.test_id
@@ -299,6 +319,7 @@ func (r *DiagnosticRepository) Get(ctx context.Context, id string) (*AdminDiagno
 		&elementsJSON,
 		&answersJSON,
 		&detail.CreatedAt,
+		&detail.UnlockedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -316,4 +337,49 @@ func (r *DiagnosticRepository) Get(ctx context.Context, id string) (*AdminDiagno
 		return nil, err
 	}
 	return &detail, nil
+}
+
+// GetMine returns userID's result for the active test slug, locked or not; the caller checks UnlockedAt.
+// It returns sql.ErrNoRows when the user has no result for that test.
+func (r *DiagnosticRepository) GetMine(ctx context.Context, userID, slug string) (*MyDiagnosticResult, *time.Time, error) {
+	query := `SELECT t.slug, t.title, dr.correct, dr.total, dr.elements::text, dr.created_at, dr.unlocked_at
+		FROM diagnostic_results dr
+		JOIN diagnostic_tests t ON t.id = dr.test_id
+		WHERE dr.user_id = $1 AND t.slug = $2 AND t.is_active`
+	var result MyDiagnosticResult
+	var elementsJSON string
+	var unlockedAt *time.Time
+	err := r.db.QueryRowContext(ctx, query, userID, slug).Scan(
+		&result.TestSlug,
+		&result.TestTitle,
+		&result.Correct,
+		&result.Total,
+		&elementsJSON,
+		&result.TakenAt,
+		&unlockedAt,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := json.Unmarshal([]byte(elementsJSON), &result.Elements); err != nil {
+		return nil, nil, err
+	}
+	if unlockedAt != nil {
+		result.UnlockedAt = *unlockedAt
+	}
+	return &result, unlockedAt, nil
+}
+
+// SetUnlocked locks or unlocks one result and returns when it was unlocked (nil when locked).
+// Unlocking an unlocked result keeps its first unlock time. It returns sql.ErrNoRows when the result is missing.
+func (r *DiagnosticRepository) SetUnlocked(ctx context.Context, id string, unlocked bool) (*time.Time, error) {
+	query := `UPDATE diagnostic_results
+		SET unlocked_at = CASE WHEN $2 THEN COALESCE(unlocked_at, now()) ELSE NULL END
+		WHERE id = $1
+		RETURNING unlocked_at`
+	var unlockedAt *time.Time
+	if err := r.db.QueryRowContext(ctx, query, id, unlocked).Scan(&unlockedAt); err != nil {
+		return nil, err
+	}
+	return unlockedAt, nil
 }
