@@ -157,7 +157,7 @@ const docTemplate = `{
         },
         "/admin/diagnostic/results/{id}": {
             "get": {
-                "description": "Admin only. Same as a list item plus every answer.",
+                "description": "Admin only. Same as a list item plus every answer and the test's questions with their correct answers.",
                 "produces": [
                     "application/json"
                 ],
@@ -2352,7 +2352,7 @@ const docTemplate = `{
         },
         "/diagnostic/results": {
             "post": {
-                "description": "Any logged-in user. Stores the score, the nine element results and up to 100 answers of a completed diagnostic test. Each email can submit only once. The response has no score: only admins can see results.",
+                "description": "Any logged-in user. Scores up to 100 answers of a completed diagnostic test on the server and stores the score, the per-element results and the answers. testSlug names the test (default cire-advanced). Questions left out count as skipped. Each email can submit each test only once. The response has no score: only admins can see results.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2405,6 +2405,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
                     },
+                    "404": {
+                        "description": "No active test with this slug",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
                     "409": {
                         "description": "Diagnostic test already taken",
                         "schema": {
@@ -2422,14 +2428,22 @@ const docTemplate = `{
         },
         "/diagnostic/status": {
             "get": {
-                "description": "Any logged-in user. The frontend uses this to block a second attempt.",
+                "description": "Any logged-in user. The frontend uses this to block a second attempt. Prefer GET /diagnostic/tests/{slug}, which also returns the test.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "diagnostic"
                 ],
-                "summary": "Did I already take the diagnostic test",
+                "summary": "Did I already take a diagnostic test",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Diagnostic test slug (default cire-advanced)",
+                        "name": "test",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Status",
@@ -2451,6 +2465,186 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "No active test with this slug",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/diagnostic/tests": {
+            "get": {
+                "description": "Any logged-in user. Every active diagnostic test in display order, each with whether the caller already took it. Never includes a score.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostic"
+                ],
+                "summary": "List diagnostic tests",
+                "responses": {
+                    "200": {
+                        "description": "Tests",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.DiagnosticTest"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/diagnostic/tests/{slug}": {
+            "get": {
+                "description": "Any logged-in user. Same as a list item. The frontend uses it to show the test's intro and to block a second attempt.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostic"
+                ],
+                "summary": "Get one diagnostic test",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Diagnostic test slug, e.g. cire-advanced",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Test",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.DiagnosticTest"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "No active test with this slug",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/diagnostic/tests/{slug}/questions": {
+            "get": {
+                "description": "Any logged-in user. The questions and options to answer, in order, without chapters or correct answers: attempts are scored on the server. 409 once the caller has taken the test.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostic"
+                ],
+                "summary": "Get a diagnostic test's questions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Diagnostic test slug, e.g. cire-advanced",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Questions",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.DiagnosticQuestion"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "No active test with this slug",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Diagnostic test already taken",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }
@@ -6665,17 +6859,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/models.DiagnosticAnswer"
                     }
                 },
-                "correct": {
-                    "type": "integer"
-                },
-                "elements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.DiagnosticElementResult"
-                    }
-                },
-                "total": {
-                    "type": "integer"
+                "testSlug": {
+                    "description": "TestSlug is the test these answers are for. Empty means the CIRE skill diagnostic (cire-advanced).",
+                    "type": "string"
                 }
             }
         },
@@ -7161,6 +7347,12 @@ const docTemplate = `{
                 "lastName": {
                     "type": "string"
                 },
+                "testSlug": {
+                    "type": "string"
+                },
+                "testTitle": {
+                    "type": "string"
+                },
                 "total": {
                     "type": "integer"
                 },
@@ -7200,6 +7392,18 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "lastName": {
+                    "type": "string"
+                },
+                "questions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiagnosticQuestionKey"
+                    }
+                },
+                "testSlug": {
+                    "type": "string"
+                },
+                "testTitle": {
                     "type": "string"
                 },
                 "total": {
@@ -7475,6 +7679,46 @@ const docTemplate = `{
                 }
             }
         },
+        "models.DiagnosticQuestion": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "question": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.DiagnosticQuestionKey": {
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "type": "integer"
+                },
+                "element": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "question": {
+                    "type": "string"
+                }
+            }
+        },
         "models.DiagnosticResult": {
             "type": "object",
             "properties": {
@@ -7482,6 +7726,41 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.DiagnosticTest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "durationMinutes": {
+                    "type": "integer"
+                },
+                "examCode": {
+                    "type": "string"
+                },
+                "examName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "questionCount": {
+                    "type": "integer"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "taken": {
+                    "type": "boolean"
+                },
+                "takenAt": {
+                    "type": "string"
+                },
+                "title": {
                     "type": "string"
                 }
             }

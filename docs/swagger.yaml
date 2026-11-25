@@ -193,14 +193,10 @@ definitions:
         items:
           $ref: '#/definitions/models.DiagnosticAnswer'
         type: array
-      correct:
-        type: integer
-      elements:
-        items:
-          $ref: '#/definitions/models.DiagnosticElementResult'
-        type: array
-      total:
-        type: integer
+      testSlug:
+        description: TestSlug is the test these answers are for. Empty means the CIRE
+          skill diagnostic (cire-advanced).
+        type: string
     type: object
   handlers.SetDeckFreeRequest:
     properties:
@@ -526,6 +522,10 @@ definitions:
         type: string
       lastName:
         type: string
+      testSlug:
+        type: string
+      testTitle:
+        type: string
       total:
         type: integer
       userId:
@@ -552,6 +552,14 @@ definitions:
       id:
         type: string
       lastName:
+        type: string
+      questions:
+        items:
+          $ref: '#/definitions/models.DiagnosticQuestionKey'
+        type: array
+      testSlug:
+        type: string
+      testTitle:
         type: string
       total:
         type: integer
@@ -753,11 +761,60 @@ definitions:
       total:
         type: integer
     type: object
+  models.DiagnosticQuestion:
+    properties:
+      id:
+        type: integer
+      options:
+        items:
+          type: string
+        type: array
+      question:
+        type: string
+    type: object
+  models.DiagnosticQuestionKey:
+    properties:
+      answer:
+        type: integer
+      element:
+        type: integer
+      id:
+        type: integer
+      options:
+        items:
+          type: string
+        type: array
+      question:
+        type: string
+    type: object
   models.DiagnosticResult:
     properties:
       createdAt:
         type: string
       id:
+        type: string
+    type: object
+  models.DiagnosticTest:
+    properties:
+      description:
+        type: string
+      durationMinutes:
+        type: integer
+      examCode:
+        type: string
+      examName:
+        type: string
+      id:
+        type: string
+      questionCount:
+        type: integer
+      slug:
+        type: string
+      taken:
+        type: boolean
+      takenAt:
+        type: string
+      title:
         type: string
     type: object
   models.Enrollment:
@@ -1893,7 +1950,8 @@ paths:
       - admin-diagnostic
   /admin/diagnostic/results/{id}:
     get:
-      description: Admin only. Same as a list item plus every answer.
+      description: Admin only. Same as a list item plus every answer and the test's
+        questions with their correct answers.
       parameters:
       - description: Diagnostic result ID
         in: path
@@ -3305,9 +3363,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Any logged-in user. Stores the score, the nine element results
-        and up to 100 answers of a completed diagnostic test. Each email can submit
-        only once. The response has no score: only admins can see results.'
+      description: 'Any logged-in user. Scores up to 100 answers of a completed diagnostic
+        test on the server and stores the score, the per-element results and the answers.
+        testSlug names the test (default cire-advanced). Questions left out count
+        as skipped. Each email can submit each test only once. The response has no
+        score: only admins can see results.'
       parameters:
       - description: Diagnostic result
         in: body
@@ -3335,6 +3395,10 @@ paths:
           description: Not logged in
           schema:
             $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: No active test with this slug
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
         "409":
           description: Diagnostic test already taken
           schema:
@@ -3349,6 +3413,12 @@ paths:
   /diagnostic/status:
     get:
       description: Any logged-in user. The frontend uses this to block a second attempt.
+        Prefer GET /diagnostic/tests/{slug}, which also returns the test.
+      parameters:
+      - description: Diagnostic test slug (default cire-advanced)
+        in: query
+        name: test
+        type: string
       produces:
       - application/json
       responses:
@@ -3365,11 +3435,125 @@ paths:
           description: Not logged in
           schema:
             $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: No active test with this slug
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
         "500":
           description: Internal server error
           schema:
             $ref: '#/definitions/utils.JSONResponse'
-      summary: Did I already take the diagnostic test
+      summary: Did I already take a diagnostic test
+      tags:
+      - diagnostic
+  /diagnostic/tests:
+    get:
+      description: Any logged-in user. Every active diagnostic test in display order,
+        each with whether the caller already took it. Never includes a score.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Tests
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.DiagnosticTest'
+                  type: array
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: List diagnostic tests
+      tags:
+      - diagnostic
+  /diagnostic/tests/{slug}:
+    get:
+      description: Any logged-in user. Same as a list item. The frontend uses it to
+        show the test's intro and to block a second attempt.
+      parameters:
+      - description: Diagnostic test slug, e.g. cire-advanced
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Test
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.DiagnosticTest'
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: No active test with this slug
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Get one diagnostic test
+      tags:
+      - diagnostic
+  /diagnostic/tests/{slug}/questions:
+    get:
+      description: 'Any logged-in user. The questions and options to answer, in order,
+        without chapters or correct answers: attempts are scored on the server. 409
+        once the caller has taken the test.'
+      parameters:
+      - description: Diagnostic test slug, e.g. cire-advanced
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Questions
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.DiagnosticQuestion'
+                  type: array
+              type: object
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: No active test with this slug
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "409":
+          description: Diagnostic test already taken
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Get a diagnostic test's questions
       tags:
       - diagnostic
   /enrollments:

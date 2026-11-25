@@ -215,9 +215,12 @@ func main() {
 	// exam routes (any logged-in user)
 	mux.Handle("GET /api/v1/exams", authMiddleware.RequireAuth(http.HandlerFunc(examHandler.ListExams)))
 
-	// diagnostic results (any logged-in user saves; admins list them)
+	// diagnostic tests and results (any logged-in user lists tests and saves; admins list results)
 	mux.Handle("POST /api/v1/diagnostic/results", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.SaveResult)))
 	mux.Handle("GET /api/v1/diagnostic/status", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.Status)))
+	mux.Handle("GET /api/v1/diagnostic/tests", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.ListTests)))
+	mux.Handle("GET /api/v1/diagnostic/tests/{slug}", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.GetTest)))
+	mux.Handle("GET /api/v1/diagnostic/tests/{slug}/questions", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.GetQuestions)))
 
 	// enrollment routes (admin only, checked in the service)
 	mux.Handle("POST /api/v1/enrollments", authMiddleware.RequireAuth(http.HandlerFunc(enrollmentHandler.CreateEnrollment)))

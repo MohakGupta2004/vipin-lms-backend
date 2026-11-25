@@ -9,25 +9,26 @@ import (
 )
 
 func validDiagnosticInput() SaveDiagnosticResultInput {
-	elements := []models.DiagnosticElementResult{}
-	for i := 1; i <= 9; i++ {
-		elements = append(elements, models.DiagnosticElementResult{
-			Element:   i,
-			Correct:   2,
-			Total:     3,
-			Points:    20,
-			MaxPoints: 30,
-		})
-	}
 	return SaveDiagnosticResultInput{
-		Correct:  18,
-		Total:    27,
-		Elements: elements,
 		Answers: []models.DiagnosticAnswer{
 			{QuestionID: 1, Picked: 2, Confidence: "high"},
 			{QuestionID: 2, Picked: -1, Confidence: "none"},
 		},
 	}
+}
+
+// diagnosticBank is a small test: question i is in element (i+1)/2 and its answer is option i%4.
+func diagnosticBank(n int) []models.DiagnosticQuestionKey {
+	questions := []models.DiagnosticQuestionKey{}
+	for i := 1; i <= n; i++ {
+		questions = append(questions, models.DiagnosticQuestionKey{
+			ID:      i,
+			Element: (i + 1) / 2,
+			Options: []string{"a", "b", "c", "d"},
+			Answer:  i % 4,
+		})
+	}
+	return questions
 }
 
 func TestDiagnosticServiceRejectsNonAdmin(t *testing.T) {
@@ -42,75 +43,33 @@ func TestDiagnosticServiceRejectsNonAdmin(t *testing.T) {
 	}
 }
 
-func TestDiagnosticServiceValidatesResult(t *testing.T) {
+func TestDiagnosticServiceValidatesAnswers(t *testing.T) {
 	s := NewDiagnosticService(nil)
 	user := &models.User{ID: "00000000-0000-0000-0000-000000000003", Role: models.RoleStudent}
 
-	// Invalid inputs return before the repository is used, so a nil repo is fine here.
-	badTotal := validDiagnosticInput()
-	badTotal.Total = 0
-	if _, err := s.SaveResult(context.Background(), user, badTotal); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("total 0 err = %v, want ErrInvalidInput", err)
-	}
-
-	badTotal = validDiagnosticInput()
-	badTotal.Total = 101
-	if _, err := s.SaveResult(context.Background(), user, badTotal); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("total 101 err = %v, want ErrInvalidInput", err)
-	}
-
-	badCorrect := validDiagnosticInput()
-	badCorrect.Correct = -1
-	if _, err := s.SaveResult(context.Background(), user, badCorrect); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("correct -1 err = %v, want ErrInvalidInput", err)
-	}
-
-	badCorrect = validDiagnosticInput()
-	badCorrect.Correct = badCorrect.Total + 1
-	if _, err := s.SaveResult(context.Background(), user, badCorrect); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("correct above total err = %v, want ErrInvalidInput", err)
-	}
-
-	fewElements := validDiagnosticInput()
-	fewElements.Elements = fewElements.Elements[:8]
-	if _, err := s.SaveResult(context.Background(), user, fewElements); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("8 elements err = %v, want ErrInvalidInput", err)
-	}
-
-	repeated := validDiagnosticInput()
-	repeated.Elements[1].Element = repeated.Elements[0].Element
-	if _, err := s.SaveResult(context.Background(), user, repeated); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("repeated element err = %v, want ErrInvalidInput", err)
-	}
-
-	outOfRange := validDiagnosticInput()
-	outOfRange.Elements[0].Element = 10
-	if _, err := s.SaveResult(context.Background(), user, outOfRange); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("element 10 err = %v, want ErrInvalidInput", err)
-	}
-
-	badElementScore := validDiagnosticInput()
-	badElementScore.Elements[0].Correct = badElementScore.Elements[0].Total + 1
-	if _, err := s.SaveResult(context.Background(), user, badElementScore); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("element correct above total err = %v, want ErrInvalidInput", err)
-	}
-
-	badMaxPoints := validDiagnosticInput()
-	badMaxPoints.Elements[0].MaxPoints = -1
-	if _, err := s.SaveResult(context.Background(), user, badMaxPoints); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("element maxPoints -1 err = %v, want ErrInvalidInput", err)
-	}
-
+	// Invalid answers return before the repository is used, so a nil repo is fine here.
 	badPicked := validDiagnosticInput()
-	badPicked.Answers[0].Picked = 4
+	badPicked.Answers[0].Picked = -2
 	if _, err := s.SaveResult(context.Background(), user, badPicked); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("picked 4 err = %v, want ErrInvalidInput", err)
+		t.Errorf("picked -2 err = %v, want ErrInvalidInput", err)
+	}
+
+	badPicked = validDiagnosticInput()
+	badPicked.Answers[0].Picked = 10
+	if _, err := s.SaveResult(context.Background(), user, badPicked); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("picked 10 err = %v, want ErrInvalidInput", err)
 	}
 
 	badConfidence := validDiagnosticInput()
 	badConfidence.Answers[0].Confidence = "sure"
 	if _, err := s.SaveResult(context.Background(), user, badConfidence); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("bad confidence err = %v, want ErrInvalidInput", err)
+	}
+
+	repeated := validDiagnosticInput()
+	repeated.Answers[1].QuestionID = repeated.Answers[0].QuestionID
+	if _, err := s.SaveResult(context.Background(), user, repeated); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("repeated question err = %v, want ErrInvalidInput", err)
 	}
 
 	tooManyAnswers := validDiagnosticInput()
@@ -121,12 +80,61 @@ func TestDiagnosticServiceValidatesResult(t *testing.T) {
 	if _, err := s.SaveResult(context.Background(), user, tooManyAnswers); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("101 answers err = %v, want ErrInvalidInput", err)
 	}
+
+	if err := validateDiagnosticAnswers(validDiagnosticInput().Answers); err != nil {
+		t.Errorf("valid answers err = %v, want nil", err)
+	}
 }
 
-func TestDiagnosticServiceAcceptsValidResult(t *testing.T) {
-	err := validateDiagnosticResult(validDiagnosticInput())
+func TestDiagnosticServiceRejectsUnknownTestSlug(t *testing.T) {
+	s := NewDiagnosticService(nil)
+	user := &models.User{ID: "00000000-0000-0000-0000-000000000006", Role: models.RoleStudent}
+
+	for _, slug := range []string{"../admin", "CIRE", "cire_advanced", "-cire", "cire-"} {
+		if _, err := s.GetTest(context.Background(), user, slug); !errors.Is(err, ErrDiagnosticTestNotFound) {
+			t.Errorf("GetTest(%q) err = %v, want ErrDiagnosticTestNotFound", slug, err)
+		}
+	}
+}
+
+func TestScoreDiagnostic(t *testing.T) {
+	bank := diagnosticBank(4) // answers: q1=1, q2=2, q3=3, q4=0; elements: q1,q2 -> 1, q3,q4 -> 2
+	score, err := scoreDiagnostic(bank, []models.DiagnosticAnswer{
+		{QuestionID: 1, Picked: 1, Confidence: "high"},   // right, confident: +2
+		{QuestionID: 2, Picked: 2, Confidence: "medium"}, // right: +1
+		{QuestionID: 3, Picked: 0, Confidence: "high"},   // wrong: -1
+		// q4 left out: skipped, 0
+	})
 	if err != nil {
-		t.Errorf("valid result err = %v, want nil", err)
+		t.Fatalf("scoreDiagnostic err = %v", err)
+	}
+	if score.Correct != 2 || score.Total != 4 {
+		t.Errorf("correct/total = %d/%d, want 2/4", score.Correct, score.Total)
+	}
+	want := []models.DiagnosticElementResult{
+		{Element: 1, Correct: 2, Total: 2, Points: 3, MaxPoints: 4},
+		{Element: 2, Correct: 0, Total: 2, Points: -1, MaxPoints: 4},
+	}
+	if len(score.Elements) != len(want) {
+		t.Fatalf("elements = %+v, want %+v", score.Elements, want)
+	}
+	for i := range want {
+		if score.Elements[i] != want[i] {
+			t.Errorf("element %d = %+v, want %+v", i+1, score.Elements[i], want[i])
+		}
+	}
+	if len(score.Answers) != 4 || score.Answers[3] != (models.DiagnosticAnswer{QuestionID: 4, Picked: -1, Confidence: "none"}) {
+		t.Errorf("answers = %+v, want 4 with q4 skipped", score.Answers)
+	}
+}
+
+func TestScoreDiagnosticRejectsAnswersOutsideTheTest(t *testing.T) {
+	bank := diagnosticBank(4)
+	if _, err := scoreDiagnostic(bank, []models.DiagnosticAnswer{{QuestionID: 5, Picked: 0, Confidence: "low"}}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("unknown question err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := scoreDiagnostic(bank, []models.DiagnosticAnswer{{QuestionID: 1, Picked: 4, Confidence: "low"}}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("picked past the options err = %v, want ErrInvalidInput", err)
 	}
 }
 
