@@ -220,6 +220,94 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/diagnostic/results/{id}/email": {
+            "post": {
+                "description": "Admin only. Queues an email with the result's score, strongest and weakest chapter and the chapter breakdown (no individual answers) through Resend. It goes to the person who took the test unless to names another address. Delivery is asynchronous.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-diagnostic"
+                ],
+                "summary": "Email a diagnostic result",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Diagnostic result ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Recipient and note",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.EmailDiagnosticResultRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Email queued",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.JSONResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/handlers.EmailDiagnosticResultResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed payload, bad address or note too long",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not logged in",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Result not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many requests",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Email queue busy, try again shortly",
+                        "schema": {
+                            "$ref": "#/definitions/utils.JSONResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/people": {
             "get": {
                 "description": "Admin only. Students of one view: new, never_logged_in, not_enrolled or recently_enrolled.\nEvery person carries all of their enrollments, newest first.",
@@ -6788,6 +6876,28 @@ const docTemplate = `{
             "properties": {
                 "taken": {
                     "type": "boolean"
+                }
+            }
+        },
+        "handlers.EmailDiagnosticResultRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "description": "Note is a personal message of up to 1000 characters, shown above the results.",
+                    "type": "string"
+                },
+                "to": {
+                    "description": "To is one email address. Empty sends to the person who took the test.",
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.EmailDiagnosticResultResponse": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "description": "To is the address the email was queued for.",
+                    "type": "string"
                 }
             }
         },

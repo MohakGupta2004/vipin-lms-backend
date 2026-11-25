@@ -5,9 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"net/mail"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/email"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 )
 
@@ -20,6 +24,8 @@ const (
 	maxDiagnosticLimit     = 200
 	maxDiagnosticAnswers   = 100
 	maxDiagnosticOptions   = 10
+	maxDiagnosticNoteRunes = 1000
+	maxEmailAddressBytes   = 254
 	// DefaultDiagnosticTestSlug is the test used when a request names none,
 	// so clients from before tests were listed keep working.
 	DefaultDiagnosticTestSlug = "cire-advanced"
@@ -29,12 +35,29 @@ var diagnosticConfidences = []string{"high", "medium", "low", "none"}
 
 var diagnosticSlugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-type DiagnosticService struct {
-	repo *models.DiagnosticRepository
+// diagnosticElementNames are the chapter names of each test, by slug, in element order.
+// They match DIAGNOSTIC_ELEMENTS in the frontend. A test missing here shows "Element N".
+var diagnosticElementNames = map[string][]string{
+	DefaultDiagnosticTestSlug: {
+		"Regulatory framework",
+		"Prospective client relationships",
+		"Scope of client relationships",
+		"Complaint handling",
+		"Market and company analysis",
+		"Market integrity and trading",
+		"Securities and managed products",
+		"Derivatives",
+		"Ethics and conflicts",
+	},
 }
 
-func NewDiagnosticService(repo *models.DiagnosticRepository) *DiagnosticService {
-	return &DiagnosticService{repo: repo}
+type DiagnosticService struct {
+	repo   *models.DiagnosticRepository
+	mailer EmailEnqueuer
+}
+
+func NewDiagnosticService(repo *models.DiagnosticRepository, mailer EmailEnqueuer) *DiagnosticService {
+	return &DiagnosticService{repo: repo, mailer: mailer}
 }
 
 type SaveDiagnosticResultInput struct {
@@ -159,6 +182,122 @@ func (s *DiagnosticService) GetResult(ctx context.Context, user *models.User, id
 		return nil, err
 	}
 	return result, nil
+}
+
+type EmailDiagnosticResultInput struct {
+	// To is the recipient. Empty means the email of the person who took the test.
+	To string
+	// Note is an optional personal message shown above the results.
+	Note string
+}
+
+// EmailResult queues an email with one result's score and chapter breakdown (no individual answers)
+// and returns the address it goes to. Admin only. Delivery is asynchronous: a Resend failure is logged, not returned.
+func (s *DiagnosticService) EmailResult(ctx context.Context, user *models.User, id string, input EmailDiagnosticResultInput) (string, error) {
+	if user.Role != models.RoleAdmin {
+		return "", ErrForbidden
+	}
+	to, note, err := validateDiagnosticEmailInput(input)
+	if err != nil {
+		return "", err
+	}
+	result, err := s.GetResult(ctx, user, id)
+	if err != nil {
+		return "", err
+	}
+	if to == "" {
+		to = result.Email
+	}
+	msg, err := email.RenderDiagnosticResult(to, diagnosticEmailData(result, note))
+	if err != nil {
+		return "", err
+	}
+	if err := s.mailer.Enqueue(msg); err != nil {
+		return "", err
+	}
+	return to, nil
+}
+
+// validateDiagnosticEmailInput trims the input and checks the recipient is one bare address.
+func validateDiagnosticEmailInput(input EmailDiagnosticResultInput) (to, note string, err error) {
+	to = strings.TrimSpace(input.To)
+	if to != "" {
+		parsed, parseErr := mail.ParseAddress(to)
+		if parseErr != nil || parsed.Address != to || len(to) > maxEmailAddressBytes {
+			return "", "", fmt.Errorf("%w: to must be one email address", ErrInvalidInput)
+		}
+	}
+	note = strings.TrimSpace(input.Note)
+	if !utf8.ValidString(note) || utf8.RuneCountInString(note) > maxDiagnosticNoteRunes {
+		return "", "", fmt.Errorf("%w: note must be at most %d characters", ErrInvalidInput, maxDiagnosticNoteRunes)
+	}
+	return to, note, nil
+}
+
+// diagnosticEmailData turns a stored result into what the results email shows.
+// Percent, level, strongest and weakest follow the admin result page.
+func diagnosticEmailData(result *models.AdminDiagnosticResultDetail, note string) email.DiagnosticResultData {
+	names := diagnosticElementNames[result.TestSlug]
+	name := func(element int) string {
+		if element >= 1 && element <= len(names) {
+			return names[element-1]
+		}
+		return fmt.Sprintf("Element %d", element)
+	}
+
+	data := email.DiagnosticResultData{
+		FirstName: result.FirstName,
+		TestTitle: result.TestTitle,
+		Correct:   result.Correct,
+		Total:     result.Total,
+		Note:      note,
+		Elements:  make([]email.DiagnosticElementLine, 0, len(result.Elements)),
+	}
+	for _, element := range result.Elements {
+		percent := diagnosticElementPercent(element)
+		data.Elements = append(data.Elements, email.DiagnosticElementLine{
+			Name:    name(element.Element),
+			Correct: element.Correct,
+			Total:   element.Total,
+			Percent: percent,
+			Level:   diagnosticLevel(percent),
+		})
+	}
+
+	if len(result.Elements) > 0 {
+		best, worst := result.Elements[0], result.Elements[0]
+		for _, element := range result.Elements {
+			percent := diagnosticElementPercent(element)
+			if p := diagnosticElementPercent(best); percent > p || (percent == p && element.Points > best.Points) {
+				best = element
+			}
+			if p := diagnosticElementPercent(worst); percent < p || (percent == p && element.Points < worst.Points) {
+				worst = element
+			}
+		}
+		data.Strongest = name(best.Element)
+		data.Weakest = name(worst.Element)
+	}
+	return data
+}
+
+// diagnosticElementPercent is points as a 0-100 percent, with a negative total counted as zero.
+func diagnosticElementPercent(element models.DiagnosticElementResult) int {
+	if element.MaxPoints <= 0 {
+		return 0
+	}
+	return int(math.Round(float64(max(0, element.Points)) / float64(element.MaxPoints) * 100))
+}
+
+func diagnosticLevel(percent int) email.DiagnosticLevel {
+	switch {
+	case percent >= 70:
+		return email.LevelStrong
+	case percent <= 40:
+		return email.LevelWeak
+	default:
+		return email.LevelSteady
+	}
 }
 
 // validateDiagnosticAnswers checks what can be checked without the test's questions.

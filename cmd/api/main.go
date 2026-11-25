@@ -101,6 +101,10 @@ func main() {
 	adminRepo := models.NewAdminRepository(db)
 	diagnosticRepo := models.NewDiagnosticRepository(db)
 
+	// emails are sent by a background worker pool so requests never wait on Resend
+	emailQueue := email.NewQueue(email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom, cfg.EmailRatePerSecond))
+	emailQueue.Start()
+
 	// services
 	authService := service.NewAuthService(userRepo, ctx, cfg.JWTSecretKey, cfg.AccessTokenExpiry, cfg.RefreshSecretKey, cfg.RefreshTokenExpiry) // Set the access token expiry duration
 
@@ -119,7 +123,7 @@ func main() {
 	studentService := service.NewStudentService(studentRepo)
 	siteService := service.NewSiteService(siteRepo)
 	adminService := service.NewAdminService(adminRepo)
-	diagnosticService := service.NewDiagnosticService(diagnosticRepo)
+	diagnosticService := service.NewDiagnosticService(diagnosticRepo, emailQueue)
 
 	// removes abandoned video uploads in the background; returns at once when GCS is disabled
 	videoMaintenanceDone := make(chan struct{})
@@ -128,9 +132,6 @@ func main() {
 		videoService.RunMaintenance(ctx)
 	}()
 
-	// emails are sent by a background worker pool so requests never wait on Resend
-	emailQueue := email.NewQueue(email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom, cfg.EmailRatePerSecond))
-	emailQueue.Start()
 	verificationService := service.NewVerificationService(userRepo, otpRepo, emailQueue, authService, cfg.JWTSecretKey)
 
 	// middlewares
@@ -185,6 +186,7 @@ func main() {
 	mux.Handle("GET /api/v1/admin/site/visitors/{id}/events", authMiddleware.RequireAuth(http.HandlerFunc(siteHandler.ListSiteVisitorEvents)))
 	mux.Handle("GET /api/v1/admin/diagnostic/results", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.ListResults)))
 	mux.Handle("GET /api/v1/admin/diagnostic/results/{id}", authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.GetResult)))
+	mux.Handle("POST /api/v1/admin/diagnostic/results/{id}/email", limit(30)(authMiddleware.RequireAuth(http.HandlerFunc(diagnosticHandler.EmailResult))))
 	mux.Handle("GET /api/v1/admin/people", authMiddleware.RequireAuth(http.HandlerFunc(adminHandler.ListAdminPeople)))
 	mux.Handle("GET /api/v1/admin/dashboard", authMiddleware.RequireAuth(http.HandlerFunc(adminHandler.GetAdminDashboard)))
 

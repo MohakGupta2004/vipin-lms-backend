@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/email"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/lib/utils"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/middleware"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
@@ -11,8 +14,9 @@ import (
 )
 
 const (
-	maxDiagnosticBodyBytes = 64 << 10 // 64 KB
-	defaultDiagnosticLimit = 50
+	maxDiagnosticBodyBytes      = 64 << 10 // 64 KB
+	maxDiagnosticEmailBodyBytes = 8 << 10  // an address and a short note
+	defaultDiagnosticLimit      = 50
 )
 
 // SaveDiagnosticResultRequest carries only the answers: the server scores them against an answer key
@@ -25,6 +29,19 @@ type SaveDiagnosticResultRequest struct {
 
 type DiagnosticStatusResponse struct {
 	Taken bool `json:"taken"`
+}
+
+// EmailDiagnosticResultRequest picks who gets a result by email. Both fields are optional.
+type EmailDiagnosticResultRequest struct {
+	// To is one email address. Empty sends to the person who took the test.
+	To string `json:"to"`
+	// Note is a personal message of up to 1000 characters, shown above the results.
+	Note string `json:"note"`
+}
+
+type EmailDiagnosticResultResponse struct {
+	// To is the address the email was queued for.
+	To string `json:"to"`
 }
 
 type DiagnosticHandler struct {
@@ -253,4 +270,50 @@ func (h *DiagnosticHandler) GetResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteJSONResponse(w, http.StatusOK, result)
+}
+
+// EmailResult godoc
+//
+//	@Summary		Email a diagnostic result
+//	@Description	Admin only. Queues an email with the result's score, strongest and weakest chapter and the chapter breakdown (no individual answers) through Resend. It goes to the person who took the test unless to names another address. Delivery is asynchronous.
+//	@Tags			admin-diagnostic
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string							true	"Diagnostic result ID"
+//	@Param			request	body		EmailDiagnosticResultRequest	false	"Recipient and note"
+//	@Success		202		{object}	utils.JSONResponse{data=EmailDiagnosticResultResponse}	"Email queued"
+//	@Failure		400		{object}	utils.JSONResponse									"Malformed payload, bad address or note too long"
+//	@Failure		401		{object}	utils.JSONResponse									"Not logged in"
+//	@Failure		403		{object}	utils.JSONResponse									"Not an admin"
+//	@Failure		404		{object}	utils.JSONResponse									"Result not found"
+//	@Failure		429		{object}	utils.JSONResponse									"Too many requests"
+//	@Failure		503		{object}	utils.JSONResponse									"Email queue busy, try again shortly"
+//	@Router			/admin/diagnostic/results/{id}/email [post]
+func (h *DiagnosticHandler) EmailResult(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, "unauthorized access")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxDiagnosticEmailBodyBytes)
+	var req EmailDiagnosticResultRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, "malformed payload")
+		return
+	}
+
+	to, err := h.diagnosticService.EmailResult(r.Context(), user, r.PathValue("id"), service.EmailDiagnosticResultInput{
+		To:   req.To,
+		Note: req.Note,
+	})
+	if errors.Is(err, email.ErrQueueFull) || errors.Is(err, email.ErrQueueClosed) {
+		utils.WriteJSONResponse(w, http.StatusServiceUnavailable, "email service is busy, please try again shortly")
+		return
+	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	utils.WriteJSONResponse(w, http.StatusAccepted, EmailDiagnosticResultResponse{To: to})
 }

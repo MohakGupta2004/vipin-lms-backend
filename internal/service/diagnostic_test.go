@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/MohakGupta2004/vipin-lms-backend/internal/email"
 	"github.com/MohakGupta2004/vipin-lms-backend/internal/models"
 )
 
@@ -32,7 +34,7 @@ func diagnosticBank(n int) []models.DiagnosticQuestionKey {
 }
 
 func TestDiagnosticServiceRejectsNonAdmin(t *testing.T) {
-	s := NewDiagnosticService(nil)
+	s := NewDiagnosticService(nil, nil)
 	student := &models.User{ID: "00000000-0000-0000-0000-000000000001", Role: models.RoleStudent}
 
 	if _, err := s.ListResults(context.Background(), student, DiagnosticResultsFilter{}); !errors.Is(err, ErrForbidden) {
@@ -44,7 +46,7 @@ func TestDiagnosticServiceRejectsNonAdmin(t *testing.T) {
 }
 
 func TestDiagnosticServiceValidatesAnswers(t *testing.T) {
-	s := NewDiagnosticService(nil)
+	s := NewDiagnosticService(nil, nil)
 	user := &models.User{ID: "00000000-0000-0000-0000-000000000003", Role: models.RoleStudent}
 
 	// Invalid answers return before the repository is used, so a nil repo is fine here.
@@ -87,7 +89,7 @@ func TestDiagnosticServiceValidatesAnswers(t *testing.T) {
 }
 
 func TestDiagnosticServiceRejectsUnknownTestSlug(t *testing.T) {
-	s := NewDiagnosticService(nil)
+	s := NewDiagnosticService(nil, nil)
 	user := &models.User{ID: "00000000-0000-0000-0000-000000000006", Role: models.RoleStudent}
 
 	for _, slug := range []string{"../admin", "CIRE", "cire_advanced", "-cire", "cire-"} {
@@ -139,7 +141,7 @@ func TestScoreDiagnosticRejectsAnswersOutsideTheTest(t *testing.T) {
 }
 
 func TestDiagnosticServiceValidatesListFilters(t *testing.T) {
-	s := NewDiagnosticService(nil)
+	s := NewDiagnosticService(nil, nil)
 	admin := &models.User{ID: "00000000-0000-0000-0000-000000000004", Role: models.RoleAdmin}
 
 	if _, err := s.ListResults(context.Background(), admin, DiagnosticResultsFilter{Limit: 201}); !errors.Is(err, ErrInvalidInput) {
@@ -151,10 +153,76 @@ func TestDiagnosticServiceValidatesListFilters(t *testing.T) {
 }
 
 func TestDiagnosticServiceRejectsUnknownID(t *testing.T) {
-	s := NewDiagnosticService(nil)
+	s := NewDiagnosticService(nil, nil)
 	admin := &models.User{ID: "00000000-0000-0000-0000-000000000005", Role: models.RoleAdmin}
 
 	if _, err := s.GetResult(context.Background(), admin, "not-a-uuid"); !errors.Is(err, ErrDiagnosticResultNotFound) {
 		t.Errorf("GetResult bad id err = %v, want ErrDiagnosticResultNotFound", err)
+	}
+}
+
+func TestDiagnosticServiceEmailResultChecks(t *testing.T) {
+	s := NewDiagnosticService(nil, nil)
+	id := "00000000-0000-0000-0000-000000000002"
+	student := &models.User{ID: "00000000-0000-0000-0000-000000000001", Role: models.RoleStudent}
+	if _, err := s.EmailResult(context.Background(), student, id, EmailDiagnosticResultInput{}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("student err = %v, want ErrForbidden", err)
+	}
+
+	admin := &models.User{ID: "00000000-0000-0000-0000-000000000003", Role: models.RoleAdmin}
+	for _, to := range []string{"not-an-email", "Asha <a@b.co>", "a@b.co, c@d.co", "a@b.co\r\nBcc: x@y.co"} {
+		if _, err := s.EmailResult(context.Background(), admin, id, EmailDiagnosticResultInput{To: to}); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("to %q err = %v, want ErrInvalidInput", to, err)
+		}
+	}
+	long := strings.Repeat("é", maxDiagnosticNoteRunes+1)
+	if _, err := s.EmailResult(context.Background(), admin, id, EmailDiagnosticResultInput{Note: long}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("long note err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := s.EmailResult(context.Background(), admin, "not-a-uuid", EmailDiagnosticResultInput{}); !errors.Is(err, ErrDiagnosticResultNotFound) {
+		t.Errorf("bad id err = %v, want ErrDiagnosticResultNotFound", err)
+	}
+
+	to, note, err := validateDiagnosticEmailInput(EmailDiagnosticResultInput{To: "  a@b.co ", Note: "  hi \n"})
+	if err != nil || to != "a@b.co" || note != "hi" {
+		t.Errorf("trimmed = %q, %q, %v", to, note, err)
+	}
+}
+
+func TestDiagnosticEmailData(t *testing.T) {
+	result := &models.AdminDiagnosticResultDetail{
+		AdminDiagnosticResult: models.AdminDiagnosticResult{
+			FirstName: "Asha",
+			TestSlug:  DefaultDiagnosticTestSlug,
+			TestTitle: "CIRE skill diagnostic",
+			Correct:   5,
+			Total:     12,
+			Elements: []models.DiagnosticElementResult{
+				{Element: 1, Correct: 1, Total: 4, Points: 0, MaxPoints: 8},  // 0%
+				{Element: 2, Correct: 4, Total: 4, Points: 6, MaxPoints: 8},  // 75%
+				{Element: 9, Correct: 0, Total: 4, Points: -4, MaxPoints: 8}, // clamped to 0%, fewer points
+			},
+		},
+	}
+	data := diagnosticEmailData(result, "note")
+	if data.Strongest != "Prospective client relationships" || data.Weakest != "Ethics and conflicts" {
+		t.Errorf("strongest/weakest = %q/%q", data.Strongest, data.Weakest)
+	}
+	if got := data.Elements[1]; got.Percent != 75 || got.Level != email.LevelStrong {
+		t.Errorf("element 2 = %+v", got)
+	}
+	if got := data.Elements[2]; got.Percent != 0 || got.Level != email.LevelWeak {
+		t.Errorf("element 9 = %+v", got)
+	}
+	if data.Note != "note" || data.FirstName != "Asha" {
+		t.Errorf("data = %+v", data)
+	}
+
+	result.TestSlug = "unknown-test"
+	if data := diagnosticEmailData(result, ""); data.Elements[0].Name != "Element 1" {
+		t.Errorf("fallback name = %q", data.Elements[0].Name)
+	}
+	if got := diagnosticLevel(50); got != email.LevelSteady {
+		t.Errorf("level 50 = %q", got)
 	}
 }

@@ -113,10 +113,19 @@ Regards,
 
 // Message is a rendered email ready to send.
 type Message struct {
-	To      string
-	Subject string
-	HTML    string
-	Text    string
+	To          string
+	Subject     string
+	HTML        string
+	Text        string
+	Attachments []Attachment
+}
+
+// Attachment is a file sent with an email. With a ContentID it is inline: the HTML shows it with src="cid:<ContentID>".
+type Attachment struct {
+	Filename    string
+	ContentType string
+	Content     []byte
+	ContentID   string
 }
 
 // Render fills the static template for kind with data.

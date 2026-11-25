@@ -38,12 +38,22 @@ func (s *ResendSender) Send(ctx context.Context, msg Message) error {
 		return err
 	}
 	s.limiter.Take() // blocks until the next slot; bounded by 1/perSecond per queued email
+	var attachments []*resend.Attachment
+	for _, a := range msg.Attachments {
+		attachments = append(attachments, &resend.Attachment{
+			Filename:    a.Filename,
+			ContentType: a.ContentType,
+			Content:     a.Content,
+			ContentId:   a.ContentID,
+		})
+	}
 	_, err := s.client.Emails.SendWithContext(ctx, &resend.SendEmailRequest{
-		From:    s.from,
-		To:      []string{msg.To},
-		Subject: msg.Subject,
-		Html:    msg.HTML,
-		Text:    msg.Text,
+		From:        s.from,
+		To:          []string{msg.To},
+		Subject:     msg.Subject,
+		Html:        msg.HTML,
+		Text:        msg.Text,
+		Attachments: attachments,
 	})
 	if err != nil {
 		return fmt.Errorf("resend send: %w", err)

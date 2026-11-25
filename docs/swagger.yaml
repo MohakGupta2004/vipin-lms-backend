@@ -149,6 +149,23 @@ definitions:
       taken:
         type: boolean
     type: object
+  handlers.EmailDiagnosticResultRequest:
+    properties:
+      note:
+        description: Note is a personal message of up to 1000 characters, shown above
+          the results.
+        type: string
+      to:
+        description: To is one email address. Empty sends to the person who took the
+          test.
+        type: string
+    type: object
+  handlers.EmailDiagnosticResultResponse:
+    properties:
+      to:
+        description: To is the address the email was queued for.
+        type: string
+    type: object
   handlers.ForgotPasswordRequest:
     properties:
       email:
@@ -1987,6 +2004,64 @@ paths:
           schema:
             $ref: '#/definitions/utils.JSONResponse'
       summary: Get one diagnostic result
+      tags:
+      - admin-diagnostic
+  /admin/diagnostic/results/{id}/email:
+    post:
+      consumes:
+      - application/json
+      description: Admin only. Queues an email with the result's score, strongest
+        and weakest chapter and the chapter breakdown (no individual answers) through
+        Resend. It goes to the person who took the test unless to names another address.
+        Delivery is asynchronous.
+      parameters:
+      - description: Diagnostic result ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Recipient and note
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/handlers.EmailDiagnosticResultRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Email queued
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.JSONResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.EmailDiagnosticResultResponse'
+              type: object
+        "400":
+          description: Malformed payload, bad address or note too long
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "401":
+          description: Not logged in
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "404":
+          description: Result not found
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "429":
+          description: Too many requests
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+        "503":
+          description: Email queue busy, try again shortly
+          schema:
+            $ref: '#/definitions/utils.JSONResponse'
+      summary: Email a diagnostic result
       tags:
       - admin-diagnostic
   /admin/people:
