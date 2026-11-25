@@ -210,15 +210,18 @@ func (r *DiagnosticRepository) Create(ctx context.Context, userID, testID string
 }
 
 // List returns one page of results, newest first, with the user's name and email.
-func (r *DiagnosticRepository) List(ctx context.Context, q string, limit, offset int) (*AdminDiagnosticResultsPage, error) {
+// testSlug, when not empty, keeps only the results of that test.
+func (r *DiagnosticRepository) List(ctx context.Context, q, testSlug string, limit, offset int) (*AdminDiagnosticResultsPage, error) {
 	qLike := "%" + q + "%"
 
 	queryTotal := `SELECT COUNT(*)
 		FROM diagnostic_results dr
 		JOIN users u ON u.id = dr.user_id
-		WHERE ($1::text = '' OR u.first_name ILIKE $2 OR u.last_name ILIKE $2 OR u.email ILIKE $2)`
+		JOIN diagnostic_tests t ON t.id = dr.test_id
+		WHERE ($1::text = '' OR u.first_name ILIKE $2 OR u.last_name ILIKE $2 OR u.email ILIKE $2)
+			AND ($3::text = '' OR t.slug = $3)`
 	page := &AdminDiagnosticResultsPage{}
-	err := r.db.QueryRowContext(ctx, queryTotal, q, qLike).Scan(&page.Total)
+	err := r.db.QueryRowContext(ctx, queryTotal, q, qLike, testSlug).Scan(&page.Total)
 	if err != nil {
 		return nil, err
 	}
@@ -229,9 +232,10 @@ func (r *DiagnosticRepository) List(ctx context.Context, q string, limit, offset
 		JOIN users u ON u.id = dr.user_id
 		JOIN diagnostic_tests t ON t.id = dr.test_id
 		WHERE ($1::text = '' OR u.first_name ILIKE $2 OR u.last_name ILIKE $2 OR u.email ILIKE $2)
+			AND ($3::text = '' OR t.slug = $3)
 		ORDER BY dr.created_at DESC, dr.id DESC
-		LIMIT $3 OFFSET $4`
-	rows, err := r.db.QueryContext(ctx, queryItems, q, qLike, limit, offset)
+		LIMIT $4 OFFSET $5`
+	rows, err := r.db.QueryContext(ctx, queryItems, q, qLike, testSlug, limit, offset)
 	if err != nil {
 		return nil, err
 	}

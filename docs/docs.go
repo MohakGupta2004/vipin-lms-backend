@@ -81,7 +81,7 @@ const docTemplate = `{
         },
         "/admin/diagnostic/results": {
             "get": {
-                "description": "Admin only. Newest first. q matches first name, last name or email.",
+                "description": "Admin only. Newest first, one page at a time. q matches first name, last name or email; test keeps only one test's results. Each item names the test it is for.",
                 "produces": [
                     "application/json"
                 ],
@@ -94,6 +94,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Case-insensitive search on name or email",
                         "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only results of this diagnostic test slug, e.g. cire-advanced",
+                        "name": "test",
                         "in": "query"
                     },
                     {
@@ -129,7 +135,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid limit or offset",
+                        "description": "Invalid limit, offset or test",
                         "schema": {
                             "$ref": "#/definitions/utils.JSONResponse"
                         }

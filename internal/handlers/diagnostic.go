@@ -202,14 +202,15 @@ func (h *DiagnosticHandler) Status(w http.ResponseWriter, r *http.Request) {
 // ListResults godoc
 //
 //	@Summary		List diagnostic results
-//	@Description	Admin only. Newest first. q matches first name, last name or email.
+//	@Description	Admin only. Newest first, one page at a time. q matches first name, last name or email; test keeps only one test's results. Each item names the test it is for.
 //	@Tags			admin-diagnostic
 //	@Produce		json
 //	@Param			q		query		string	false	"Case-insensitive search on name or email"
+//	@Param			test	query		string	false	"Only results of this diagnostic test slug, e.g. cire-advanced"
 //	@Param			limit	query		int		false	"Max results (default 50, max 200)"
 //	@Param			offset	query		int		false	"Number to skip (default 0)"
 //	@Success		200		{object}	utils.JSONResponse{data=models.AdminDiagnosticResultsPage}	"Results"
-//	@Failure		400		{object}	utils.JSONResponse								"Invalid limit or offset"
+//	@Failure		400		{object}	utils.JSONResponse								"Invalid limit, offset or test"
 //	@Failure		401		{object}	utils.JSONResponse								"Not logged in"
 //	@Failure		403		{object}	utils.JSONResponse								"Not an admin"
 //	@Failure		500		{object}	utils.JSONResponse								"Internal server error"
@@ -233,9 +234,10 @@ func (h *DiagnosticHandler) ListResults(w http.ResponseWriter, r *http.Request) 
 	}
 
 	page, err := h.diagnosticService.ListResults(r.Context(), user, service.DiagnosticResultsFilter{
-		Q:      r.URL.Query().Get("q"),
-		Limit:  limit,
-		Offset: offset,
+		Q:        r.URL.Query().Get("q"),
+		TestSlug: r.URL.Query().Get("test"),
+		Limit:    limit,
+		Offset:   offset,
 	})
 	if err != nil {
 		writeServiceError(w, err)

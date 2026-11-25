@@ -150,6 +150,11 @@ func TestDiagnosticServiceValidatesListFilters(t *testing.T) {
 	if _, err := s.ListResults(context.Background(), admin, DiagnosticResultsFilter{Limit: 50, Offset: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("offset -1 err = %v, want ErrInvalidInput", err)
 	}
+	for _, slug := range []string{"CIRE", "cire advanced", "../x", "cire-"} {
+		if _, err := s.ListResults(context.Background(), admin, DiagnosticResultsFilter{TestSlug: slug}); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("test %q err = %v, want ErrInvalidInput", slug, err)
+		}
+	}
 }
 
 func TestDiagnosticServiceRejectsUnknownID(t *testing.T) {

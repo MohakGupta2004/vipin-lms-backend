@@ -145,9 +145,11 @@ func (s *DiagnosticService) SaveResult(ctx context.Context, user *models.User, i
 }
 
 type DiagnosticResultsFilter struct {
-	Q      string
-	Limit  int
-	Offset int
+	Q string
+	// TestSlug keeps only the results of one test. Empty means every test.
+	TestSlug string
+	Limit    int
+	Offset   int
 }
 
 func (s *DiagnosticService) ListResults(ctx context.Context, user *models.User, filter DiagnosticResultsFilter) (*models.AdminDiagnosticResultsPage, error) {
@@ -164,7 +166,11 @@ func (s *DiagnosticService) ListResults(ctx context.Context, user *models.User, 
 	if filter.Offset < 0 {
 		return nil, fmt.Errorf("%w: offset must be 0 or more", ErrInvalidInput)
 	}
-	return s.repo.List(ctx, filter.Q, filter.Limit, filter.Offset)
+	filter.TestSlug = strings.TrimSpace(filter.TestSlug)
+	if filter.TestSlug != "" && !diagnosticSlugPattern.MatchString(filter.TestSlug) {
+		return nil, fmt.Errorf("%w: test must be a diagnostic test slug, e.g. %s", ErrInvalidInput, DefaultDiagnosticTestSlug)
+	}
+	return s.repo.List(ctx, filter.Q, filter.TestSlug, filter.Limit, filter.Offset)
 }
 
 func (s *DiagnosticService) GetResult(ctx context.Context, user *models.User, id string) (*models.AdminDiagnosticResultDetail, error) {
